@@ -33,12 +33,12 @@ app.post(
             });
           }
 
-          const kto = optionsMap.kto || 'Nieznany';
+          const kto = optionsMap.kto || '';
+          const imienazwisko = optionsMap.imienazwisko || 'Nieznane';
           const powod = optionsMap.powod || 'Brak powodu';
           const stopien = optionsMap.stopien || 'Brak stopnia';
           const odznaka = optionsMap.odznaka || 'Brak odznaki';
 
-          // Pobranie aktualnego czasu w polskiej strefie (format DD.MM.YYYY HH:MM)
           const formattedDate = new Date().toLocaleString("pl-PL", { 
             timeZone: "Europe/Warsaw",
             day: "2-digit",
@@ -48,9 +48,9 @@ app.post(
             minute: "2-digit"
           }).replace(',', '');
 
-          // Dokładny opis dopasowany do Twojego wzoru z obrazka
+          // Kto wyświetla się jako wpisany tekst (Imię Nazwisko), a pod spodem zostają czyste dane
           const embedDescription = 
-            `**Kto:** ${kto}\n` +
+            `**Kto:** ${imienazwisko}\n` +
             `**Powód:** **${powod}**\n` +
             `**Nowy stopień:** ${stopien}\n` +
             `**Nowy numer odznaki:** ${odznaka}\n` +
@@ -59,16 +59,16 @@ app.post(
 
           const embed = {
             title: 'AWANS',
-            color: 3066993, // Żywy zielony kolor paska
+            color: 3066993, 
             description: embedDescription
           };
 
           const channelId = process.env.DISCORD_CHANNEL_ID;
           const botToken = process.env.DISCORD_BOT_TOKEN;
 
-          // Wysyłamy tekstowy PING na początku wiadomości (nad embedem), a pod nim embed
+          // Na samej górze idzie czysty PING (wzmianka konta użytkownika), pod nim Embed wzoru
           const messagePayload = {
-            content: `${kto}`, 
+            content: kto ? `<@${kto}>` : '', 
             embeds: [embed],
           };
 
@@ -93,7 +93,7 @@ app.post(
           return res.json({
             type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             data: {
-              content: '✅ Awans został pomyślnie wysłany zgodnie ze wzorem!',
+              content: '✅ Awans został pomyślnie wysłany!',
               flags: 64, 
             },
           });
@@ -102,7 +102,7 @@ app.post(
           return res.json({
             type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             data: {
-              content: '❌ Błąd podczas wysyłania awansu. Spróbuj ponownie.',
+              content: '❌ Błąd podczas wysyłania awansu.',
               flags: 64,
             },
           });
