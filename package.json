@@ -1,0 +1,19 @@
+{
+  "name": "discord-awans-bot",
+  "version": "1.0.0",
+  "description": "Bot do obsługi interakcji awansów",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "discord-interactions": "^4.1.1",
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": "20"
+  }
+}
