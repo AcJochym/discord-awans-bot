@@ -5,34 +5,27 @@ import fetch from 'node-fetch';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(express.json());
 
-// Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// Discord Interactions endpoint with signature verification
 app.post(
   '/interactions',
   verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY),
   async (req, res) => {
     const interaction = req.body;
 
-    // Handle PING interaction (Discord URL verification)
     if (interaction.type === InteractionType.PING) {
       return res.json({ type: InteractionResponseType.PONG });
     }
 
-    // Handle APPLICATION_COMMAND interaction
     if (interaction.type === InteractionType.APPLICATION_COMMAND) {
       const { name, options } = interaction.data;
 
-      // Handle /awans command
       if (name === 'awans') {
         try {
-          // Extract options from command
           const optionsMap = {};
           if (options) {
             options.forEach((opt) => {
@@ -45,48 +38,37 @@ app.post(
           const stopien = optionsMap.stopien || 'Brak stopnia';
           const odznaka = optionsMap.odznaka || 'Brak odznaki';
 
-          // Create embed object
+          // Pobranie aktualnego czasu w polskiej strefie (format DD.MM.YYYY HH:MM)
+          const formattedDate = new Date().toLocaleString("pl-PL", { 
+            timeZone: "Europe/Warsaw",
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit"
+          }).replace(',', '');
+
+          // Dokładny opis dopasowany do Twojego wzoru z obrazka
+          const embedDescription = 
+            `**Kto:** ${kto}\n` +
+            `**Powód:** **${powod}**\n` +
+            `**Nowy stopień:** ${stopien}\n` +
+            `**Nowy numer odznaki:** ${odznaka}\n` +
+            `**Nadane przez:** <@${interaction.member.user.id}>\n\n` +
+            `${formattedDate}`;
+
           const embed = {
             title: 'AWANS',
-            color: 3066993, // Teal/cyan color
-            fields: [
-              {
-                name: '👤 Kto',
-                value: kto,
-                inline: true,
-              },
-              {
-                name: '📝 Powód',
-                value: powod,
-                inline: true,
-              },
-              {
-                name: '⭐ Stopień',
-                value: stopien,
-                inline: true,
-              },
-              {
-                name: '🎖️ Odznaka',
-                value: odznaka,
-                inline: true,
-              },
-              {
-                name: '👑 Nadane przez',
-                value: `<@${interaction.member.user.id}>`,
-                inline: false,
-              },
-            ],
-            timestamp: new Date().toISOString(),
-            footer: {
-              text: 'System Awansów',
-            },
+            color: 3066993, // Żywy zielony kolor paska
+            description: embedDescription
           };
 
-          // Send embed to channel
           const channelId = process.env.DISCORD_CHANNEL_ID;
           const botToken = process.env.DISCORD_BOT_TOKEN;
 
+          // Wysyłamy tekstowy PING na początku wiadomości (nad embedem), a pod nim embed
           const messagePayload = {
+            content: `${kto}`, 
             embeds: [embed],
           };
 
@@ -108,18 +90,15 @@ app.post(
             throw new Error(`Failed to send message: ${channelResponse.status}`);
           }
 
-          // Respond to user with hidden message (flags: 64 = ephemeral)
           return res.json({
             type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             data: {
-              content: '✅ Awans został pomyślnie wysłany!',
-              flags: 64, // Ephemeral/hidden message
+              content: '✅ Awans został pomyślnie wysłany zgodnie ze wzorem!',
+              flags: 64, 
             },
           });
         } catch (error) {
           console.error('Error handling awans command:', error);
-
-          // Send error response to user
           return res.json({
             type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             data: {
@@ -130,14 +109,10 @@ app.post(
         }
       }
     }
-
-    // Default response for unknown interactions
     res.status(400).json({ error: 'Unknown interaction type' });
   }
 );
 
-// Start server
 app.listen(PORT, () => {
   console.log(`🤖 Discord bot server running on port ${PORT}`);
-  console.log(`📡 Interactions endpoint: POST /interactions`);
 });
