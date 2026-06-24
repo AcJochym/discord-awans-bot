@@ -26,6 +26,7 @@ app.post(
 
       if (name === 'awans') {
         try {
+          // Prawidłowe mapowanie opcji wysłanych przez Discorda
           const optionsMap = {};
           if (options) {
             options.forEach((opt) => {
@@ -33,12 +34,14 @@ app.post(
             });
           }
 
+          // Wyciągamy dokładnie takie same nazwy, jakie są w rejestracji komendy JSON
           const kto = optionsMap.kto || '';
-          const imienazwisko = optionsMap.imienazwisko || 'Nieznane';
+          const imieNazwisko = optionsMap.imie_nazwisko || 'Nieznany'; 
           const powod = optionsMap.powod || 'Brak powodu';
           const stopien = optionsMap.stopien || 'Brak stopnia';
           const odznaka = optionsMap.odznaka || 'Brak odznaki';
 
+          // Pobranie aktualnego czasu w polskiej strefie (DD.MM.YYYY HH:MM)
           const formattedDate = new Date().toLocaleString("pl-PL", { 
             timeZone: "Europe/Warsaw",
             day: "2-digit",
@@ -48,9 +51,9 @@ app.post(
             minute: "2-digit"
           }).replace(',', '');
 
-          // Kto wyświetla się jako wpisany tekst (Imię Nazwisko), a pod spodem zostają czyste dane
+          // Układ tekstu kropka w kropkę jak na Twoim wzorze
           const embedDescription = 
-            `**Kto:** ${imienazwisko}\n` +
+            `**Kto:** ${imieNazwisko}\n` +
             `**Powód:** **${powod}**\n` +
             `**Nowy stopień:** ${stopien}\n` +
             `**Nowy numer odznaki:** ${odznaka}\n` +
@@ -59,16 +62,15 @@ app.post(
 
           const embed = {
             title: 'AWANS',
-            color: 3066993, 
+            color: 3066993, // Zielony pasek boczny
             description: embedDescription
           };
 
           const channelId = process.env.DISCORD_CHANNEL_ID;
           const botToken = process.env.DISCORD_BOT_TOKEN;
 
-          // Na samej górze idzie czysty PING (wzmianka konta użytkownika), pod nim Embed wzoru
           const messagePayload = {
-            content: kto ? `<@${kto}>` : '', 
+            content: kto ? `<@${kto}>` : '', // Robi wzmiankę (ping) użytkownika nad embedem
             embeds: [embed],
           };
 
@@ -102,7 +104,7 @@ app.post(
           return res.json({
             type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             data: {
-              content: '❌ Błąd podczas wysyłania awansu.',
+              content: '❌ Błąd podczas przetwarzania awansu. Sprawdź logi bota.',
               flags: 64,
             },
           });
