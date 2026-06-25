@@ -14,46 +14,51 @@ const serverConfigs = {
   //Field Training Division - TESTOWE
   "1476244145440948256": {
     REQUIRED_ROLE_IDS: ["1476244145923297429", "TUTAJ_MOZESZ_DODAC_DRUGA_ROLE_TESTOWA"],
+    PING_ROLE_ID: "ID",
     CHANNELS: {
       AWANS: "1476244147202428977", DEGRADACJA: "1476244147202428977", ZAWIESZENIE: "1476244147202428977", 
       ZAGROZENIE: "1476244147202428977", SZKOLENIE: "1476244147202428977", URLOP: "1476244147202428977", 
-      ZWOLNIENIA: "1476244147202428977", NAGANA: "1476244147202428977", KARY: "1476244147202428977"
+      ZWOLNIENIA: "1476244147202428977", NAGANA: "1476244147202428977", KARY: "1476244147202428977", ZEBRANIE: "ID"
     }
   },
   //LSPD
   "1344364720605499442": {
     REQUIRED_ROLE_IDS: ["1505571491180314956", "1344373183079256064", "1344664019751014543"],
+    PING_ROLE_ID: "1344364929775304775",
     CHANNELS: {
       AWANS: "1344379382013362238", DEGRADACJA: "1344379443858247700", ZAWIESZENIE: "1344379535436546099", 
       ZAGROZENIE: "1417946459378024519", SZKOLENIE: "1344386111975329925", URLOP: "1344379129193173094", 
-      ZWOLNIENIA: "1344379809278595114", NAGANA: "1519663613386952774", KARY: "1519663613386952774"
+      ZWOLNIENIA: "1344379809278595114", NAGANA: "1519663613386952774", KARY: "1519663613386952774", ZEBRANIE: "1344374624636502126"
     }
   },
   //BCSO
   "ID_TWOJEGO_SERWERA_3": {
     REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
+    PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
-      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
     }
   },
   //LSSD
   "ID_TWOJEGO_SERWERA_4": {
     REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
+    PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
-      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
     }
   },
   //DOC
   "ID_TWOJEGO_SERWERA_5": {
     REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
+    PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
-      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
     }
   },
 };
@@ -182,6 +187,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "• **/kara_finansowa** — Nakłada na pracownika obowiązek zapłaty określonej kwoty jako karę dyscyplinarną.\n" +
                 "• **/szkolenie** — Pozwala udokumentować przebieg i wynik egzaminu/szkolenia. W zależności od wybranego wyniku (zdane/niezdane) embed automatycznie dobiera odpowiedni kolor (zielony/czerwony).\n" +
                 "• **/zagrozenie** — Wprowadza na serwerze stan zagrożenia. Automatycznie oznacza rolę `@everyone` (wyciszone w logach) i zmienia kolor embedu zależnie od wybranego poziomu (Zielony, Pomarańczowy, Czerwony, Czarny).\n" +
+                "• **/zebranie** — Uzupełniacie sobie date, godzine, miejsce zebrania. Tak w wielkim skrócie.\n" +
                 "• **/odwolaj_zagrozenie** — Przywraca normalny stan funkcjonowania serwera frakcji, informując o tym wszystkich członków.\n\n" +
                 "⚙️ **Jak zarządzać wnioskami urlopowymi (Akceptacja/Odrzucenie):**\n" +
                 "Kiedy użytkownik poprawnie wyśle wniosek urlopowy, pod wiadomością pojawią się dwa duże przyciski:\n" +
@@ -312,6 +318,18 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     else if (name === 'kara_finansowa') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+    }
+      else if (name === 'zebranie') {
+      // Pobieramy ID roli z konfiguracji
+      const roleId = guildConfig.PING_ROLE_ID;
+      content = roleId ? `<@&${roleId}>` : "@everyone"; 
+      
+      // Formatowanie zgodne z obrazkiem image_3f9d06.png
+      description = `**ZEBRANIE DEPARTAMENTU** <@&${roleId}>\n` +
+                    `**Data:** ${opts.data}\n` +
+                    `**Godzina:** ${opts.godzina}\n` +
+                    `**Miejsce Zebrania:** ${opts.miejsce}\n\n` +
+                    `*Dziś o ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}*`;
     }
     else {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
