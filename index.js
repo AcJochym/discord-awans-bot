@@ -6,6 +6,27 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
+// --- TABELA KONFIGURACJI SERWERÓW ---
+// Tutaj wpisujesz ID serwerów i ich kanały. Tylko te serwery będą działać.
+const serverConfigs = {
+  "ID_TWOJEGO_SERWERA_1": {
+    REQUIRED_ROLE_ID: "ID_ROLI_ADMINA",
+    CHANNELS: {
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+    }
+  },
+  "ID_TWOJEGO_SERWERA_2": {
+    REQUIRED_ROLE_ID: "ID_ROLI_ADMINA",
+    CHANNELS: {
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+    }
+  }
+};
+
 // Funkcja pomocnicza do wysyłania wiadomości prywatnych (DM)
 async function sendDM(userId, content) {
   try {
@@ -29,8 +50,16 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   const interaction = req.body;
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
+  // Pobranie konfiguracji dla serwera, na którym wywołano interakcję
+  const guildConfig = serverConfigs[interaction.guild_id];
+  
+  // Jeśli serwer nie jest skonfigurowany, przerywamy działanie
+  if (!guildConfig) {
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ten serwer nie jest skonfigurowany.", flags: 64 } });
+  }
+
   // --- 1. OBSŁUGA MODALA (POWÓD ODRZUCENIA) ---
-  if (interaction.type === 5) { // 5 = MODAL_SUBMIT
+  if (interaction.type === 5) {
     const customId = interaction.data.custom_id;
     if (customId.startsWith('modal_reject_')) {
       const targetUserId = customId.replace('modal_reject_', '');
@@ -58,9 +87,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === InteractionType.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id;
     if (customId.startsWith('urlop_')) {
-      const allowedRoleId = process.env.REQUIRED_ROLE_ID;
       const memberRoles = interaction.member.roles || [];
-      if (allowedRoleId && !memberRoles.includes(allowedRoleId)) {
+      if (guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
       }
 
@@ -96,21 +124,28 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
+    // Mapowanie komend na kanały z configu danego serwera
     const configs = {
-      awans: { title: 'AWANS', color: 3066993, channel: process.env.CHANNEL_ID_AWANS },
-      degradacja: { title: 'DEGRADACJA', color: 15158332, channel: process.env.CHANNEL_ID_DEGRADACJA },
-      zawieszenie: { title: 'ZAWIESZENIE', color: 16753920, channel: process.env.CHANNEL_ID_ZAWIESZENIE },
-      zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: process.env.CHANNEL_ID_ZAGROZENIE },
-      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: process.env.CHANNEL_ID_ZAGROZENIE },
-      szkolenie: { title: 'SZKOLENIE', color: 3447003, channel: process.env.CHANNEL_ID_SZKOLENIE },
-      urlop: { title: 'URLOP OCZEKUJE NA AKCEPTACJE', color: 16753920, channel: process.env.CHANNEL_ID_URLOP },
-      zwolnij: { title: 'ZWOLNIENIE', color: 15158332, channel: process.env.CHANNEL_ID_ZWOLNIENIA },
-      nagana: { title: 'NAGANA', color: 16711680, channel: process.env.CHANNEL_ID_NAGANA },
-      kara_finansowa: { title: 'KARA FINANSOWA', color: 16766720, channel: process.env.CHANNEL_ID_KARY }
+      awans: { title: 'AWANS', color: 3066993, channel: guildConfig.CHANNELS.AWANS },
+      degradacja: { title: 'DEGRADACJA', color: 15158332, channel: guildConfig.CHANNELS.DEGRADACJA },
+      zawieszenie: { title: 'ZAWIESZENIE', color: 16753920, channel: guildConfig.CHANNELS.ZAWIESZENIE },
+      zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: guildConfig.CHANNELS.ZAGROZENIE },
+      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: guildConfig.CHANNELS.ZAGROZENIE },
+      szkolenie: { title: 'SZKOLENIE', color: 3447003, channel: guildConfig.CHANNELS.SZKOLENIE },
+      urlop: { title: 'URLOP OCZEKUJE NA AKCEPTACJE', color: 16753920, channel: guildConfig.CHANNELS.URLOP },
+      zwolnij: { title: 'ZWOLNIENIE', color: 15158332, channel: guildConfig.CHANNELS.ZWOLNIENIA },
+      nagana: { title: 'NAGANA', color: 16711680, channel: guildConfig.CHANNELS.NAGANA },
+      kara_finansowa: { title: 'KARA FINANSOWA', color: 16766720, channel: guildConfig.CHANNELS.KARY }
     };
 
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
+
+    // Walidacja uprawnień
+    const memberRoles = interaction.member.roles || [];
+    if (name !== 'urlop' && guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
+      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
+    }
 
     const now = new Date();
     const data = `${now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" })} ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}`;
