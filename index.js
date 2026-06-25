@@ -33,20 +33,25 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
       finalColor = colorMap[opts.poziom] || cfg.color;
     }
-    if (name === 'odwolaj_zagrozenie') finalColor = 5763719; // Wymuszony zielony
+    if (name === 'odwolaj_zagrozenie') finalColor = 5763719;
 
-    const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw" }).substring(0, 16);
+    // Poprawiona data i godzina (format DD.MM.YYYY HH:MM)
+    const now = new Date();
+    const datePart = now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" });
+    const timePart = now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' });
+    const data = `${datePart} ${timePart}`;
+
     let description = "";
     let content = opts.kto ? `<@${opts.kto}>` : "";
 
     // Budowanie treści
     if (name === 'zagrozenie') {
-    //  content = "@everyone";
+      content = "@everyone";
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-    //  content = "@everyone";
+      content = "@everyone";
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
