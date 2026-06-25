@@ -20,46 +20,42 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       awans: { title: 'AWANS', color: 3066993, channel: process.env.CHANNEL_ID_AWANS },
       degradacja: { title: 'DEGRADACJA', color: 15158332, channel: process.env.CHANNEL_ID_DEGRADACJA },
       zawieszenie: { title: 'ZAWIESZENIE', color: 16753920, channel: process.env.CHANNEL_ID_ZAWIESZENIE },
-      zagrozenie: { title: 'ZAGROŻENIE', color: 16776960, channel: process.env.CHANNEL_ID_ZAGROZENIE },
-      odwolaj_zagrozenie: { title: 'ODWOŁANIE ZAGROŻENIA', color: 3447003, channel: process.env.CHANNEL_ID_ZAGROZENIE }
+      zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: process.env.CHANNEL_ID_ZAGROZENIE },
+      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 3447003, channel: process.env.CHANNEL_ID_ZAGROZENIE }
     };
 
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
 
-    // Obsługa kolorów dla zagrożenia
-    let finalColor = cfg.color;
-    if (name === 'zagrozenie' && opts.stopien) {
-      const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
-      finalColor = colorMap[opts.stopien] || finalColor;
-    }
-
-    const ktoPing = opts.kto ? `<@${opts.kto}>` : '';
-    const nadawca = `<@${interaction.member.user.id}>`;
     const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw" }).substring(0, 16);
+    let description = "";
+    let content = opts.kto ? `<@${opts.kto}>` : ""; // Ping użytkownika
 
-    // Budowanie opisu zgodnie z wzorem
-    let description = `**Kto: ${opts.imie_nazwisko || 'Brak'}**\n**Powód: ${opts.powod || 'Brak'}**\n`;
-    
-    if (name === 'zawieszenie') {
-      description += `**Czas zawieszenia: ${opts.czas}**\n**Zawieszono przez: ${nadawca}**`;
-    } else if (name === 'zagrozenie') {
-      description += `**Stopień zagrożenia: ${opts.stopien}**\n**Nadane przez: ${nadawca}**`;
-    } else if (name === 'odwolaj_zagrozenie') {
-      description += `**Nadane przez: ${nadawca}**`;
-    } else {
-      description += `**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: ${nadawca}**`;
+    // Logika budowania treści
+    if (name === 'zagrozenie') {
+      content = "@everyone";
+      cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
+      description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
+    } 
+    else if (name === 'odwolaj_zagrozenie') {
+      content = "@everyone";
+      description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
+    } 
+    else if (name === 'zawieszenie') {
+      description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Czas zawieszenia: ${opts.czas}**\n**Zawieszono przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
+    } 
+    else {
+      description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
     }
-    description += `\n\n**${data}**`;
 
     // Wysyłka
     await fetch(`https://discord.com/api/v10/channels/${cfg.channel}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
-      body: JSON.stringify({ content: ktoPing, embeds: [{ title: cfg.title, color: finalColor, description }] })
+      body: JSON.stringify({ content: content, embeds: [{ title: cfg.title, color: cfg.color, description }] })
     });
 
-    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ ${cfg.title} wysłana!`, flags: 64 } });
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Operacja ${name} została wykonana!`, flags: 64 } });
   }
 });
 
