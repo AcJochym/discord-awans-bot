@@ -3,118 +3,47 @@ import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'd
 import fetch from 'node-fetch';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
+app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
+  const interaction = req.body;
+  if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
-app.post(
-  '/interactions',
-  verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY),
-  async (req, res) => {
-    const interaction = req.body;
+  if (interaction.type === InteractionType.APPLICATION_COMMAND) {
+    const { name, options } = interaction.data;
+    const opts = {};
+    if (options) options.forEach(o => opts[o.name] = o.value);
 
-    if (interaction.type === InteractionType.PING) {
-      return res.json({ type: InteractionResponseType.PONG });
-    }
+    const ktoPing = `<@${opts.kto}>`;
+    const nadawca = `<@${interaction.member.user.id}>`;
+    const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw" }).substring(0, 16);
 
-    if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-      const { name, options } = interaction.data;
+    // --- LOGIKA DLA AWANSU I DEGRADACJI ---
+    const isAwans = name === 'awans';
+    const title = isAwans ? 'AWANS' : 'DEGRADACJA';
+    const color = isAwans ? 3066993 : 15158332;
 
-      if (name === 'awans') {
-        try {
-          // Prawidłowe mapowanie opcji wysłanych przez Discorda
-          const optionsMap = {};
-          if (options) {
-            options.forEach((opt) => {
-              optionsMap[opt.name] = opt.value;
-            });
-          }
+    const description = 
+      `**Kto:** **${opts.imie_nazwisko}**\n` +
+      `**Powód:** **${opts.powod}**\n` +
+      `**Nowy stopień:** **${opts.stopien}**\n` +
+      `**Nowy numer odznaki:** **${opts.odznaka}**\n` +
+      `**Nadane przez:** **${nadawca}**\n\n` +
+      `**${data}**`;
 
-          // Wyciągamy dokładnie takie same nazwy, jakie są w rejestracji komendy JSON
-          const kto = optionsMap.kto || '';
-          const imieNazwisko = optionsMap.imie_nazwisko || 'Nieznany'; 
-          const powod = optionsMap.powod || 'Brak powodu';
-          const stopien = optionsMap.stopien || 'Brak stopnia';
-          const odznaka = optionsMap.odznaka || 'Brak odznaki';
+    const payload = {
+      content: ktoPing,
+      embeds: [{ title, color, description }]
+    };
 
-          // Pobranie aktualnego czasu w polskiej strefie (DD.MM.YYYY HH:MM)
-          const formattedDate = new Date().toLocaleString("pl-PL", { 
-            timeZone: "Europe/Warsaw",
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit"
-          }).replace(',', '');
+    await fetch(`https://discord.com/api/v10/channels/${process.env.DISCORD_CHANNEL_ID}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
+      body: JSON.stringify(payload)
+    });
 
-          // Układ tekstu kropka w kropkę jak na Twoim wzorze
-          const embedDescription = 
-            `**Kto:** ${imieNazwisko}\n` +
-            `**Powód:** **${powod}**\n` +
-            `**Nowy stopień:** ${stopien}\n` +
-            `**Nowy numer odznaki:** ${odznaka}\n` +
-            `**Nadane przez:** <@${interaction.member.user.id}>\n\n` +
-            `${formattedDate}`;
-
-          const embed = {
-            title: 'AWANS',
-            color: 3066993, // Zielony pasek boczny
-            description: embedDescription
-          };
-
-          const channelId = process.env.DISCORD_CHANNEL_ID;
-          const botToken = process.env.DISCORD_BOT_TOKEN;
-
-          const messagePayload = {
-            content: kto ? `<@${kto}>` : '', // Robi wzmiankę (ping) użytkownika nad embedem
-            embeds: [embed],
-          };
-
-          const channelResponse = await fetch(
-            `https://discord.com/api/v10/channels/${channelId}/messages`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bot ${botToken}`,
-              },
-              body: JSON.stringify(messagePayload),
-            }
-          );
-
-          if (!channelResponse.ok) {
-            const errorData = await channelResponse.json();
-            console.error('Discord API error:', errorData);
-            throw new Error(`Failed to send message: ${channelResponse.status}`);
-          }
-
-          return res.json({
-            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-            data: {
-              content: '✅ Awans został pomyślnie wysłany!',
-              flags: 64, 
-            },
-          });
-        } catch (error) {
-          console.error('Error handling awans command:', error);
-          return res.json({
-            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-            data: {
-              content: '❌ Błąd podczas przetwarzania awansu. Sprawdź logi bota.',
-              flags: 64,
-            },
-          });
-        }
-      }
-    }
-    res.status(400).json({ error: 'Unknown interaction type' });
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: '✅ Operacja zakończona!', flags: 64 } });
   }
-);
-
-app.listen(PORT, () => {
-  console.log(`🤖 Discord bot server running on port ${PORT}`);
 });
+
+app.listen(3000);
