@@ -160,10 +160,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
     // --- BLOKADA DLA KOMEND WŁAŚCICIELA (/pomoc oraz /pomoc_urlop) ---
     if (name === 'pomoc' || name === 'pomoc_urlop') {
+      // Jeśli ktoś inny wpisze komendę – dostanie ukrytą wiadomość z błędem
       if (interaction.member.user.id !== BOT_OWNER_ID) {
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } });
       }
 
+      // Treść komendy pomoc – usunięto flage 64 (będzie publiczna dla wszystkich)
       if (name === 'pomoc') {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -185,12 +187,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "Kiedy użytkownik poprawnie wyśle wniosek urlopowy, pod wiadomością pojawią się dwa duże przyciski:\n" +
                 "1. **AKCEPTUJ (Zielony)** — Kliknięcie przycisku natychmiast zmienia kolor całego wniosku na zielony, usuwa przyciski z kanału (żeby nikt nie kliknął drugi raz) i automatycznie wysyła do pracownika prywatną wiadomość (DM) o pozytywnym rozpatrzeniu.\n" +
                 "2. **ODRZUĆ (Czerwony)** — Po kliknięciu bot wyświetli na ekranie wyskakujące okienko (Modal). Administrator **musi** wpisać w nim powód odrzucenia wniosku. Po zatwierdzeniu formularza, wniosek na kanale zmieni kolor na czerwony, dopisze powód odrzucenia oraz nick administratora, a pracownik otrzyma powód odmowy bezpośrednio na swoje DM."
-            }],
-            flags: 64
+            }]
           }
         });
       }
 
+      // Treść komendy pomoc_urlop – usunięto flage 64 (będzie publiczna dla wszystkich)
       if (name === 'pomoc_urlop') {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -214,7 +216,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "3. Jeśli wszystko jest w porządku, pracownik dostaje na DM informację: *'Twój wniosek urlopowy został przesłany i oczekuje na akceptację.'*\n" +
                 "4. Na kanale generuje się estetyczny pomarańczowy dokument z przyciskami decyzyjnymi dla Zarządu."
             }],
-            flags: 64
           }
         });
       }
@@ -284,7 +285,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
     }
     else if (name === 'zagrozenie') {
-      content = "@everyone"; 
+     // content = "@everyone"; 
       if (opts.poziom) {
         const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
         finalColor = colorMap[opts.poziom] || cfg.color;
@@ -293,7 +294,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-      content = "@everyone";
+     // content = "@everyone";
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
