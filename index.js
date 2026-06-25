@@ -32,7 +32,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       degradacja: { title: 'DEGRADACJA', color: 15158332, channel: process.env.CHANNEL_ID_DEGRADACJA },
       zawieszenie: { title: 'ZAWIESZENIE', color: 16753920, channel: process.env.CHANNEL_ID_ZAWIESZENIE },
       zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: process.env.CHANNEL_ID_ZAGROZENIE },
-      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: process.env.CHANNEL_ID_ZAGROZENIE }
+      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: process.env.CHANNEL_ID_ZAGROZENIE },
+      szkolenie: { title: 'SZKOLENIE', color: 3447003, channel: process.env.CHANNEL_ID_SZKOLENIE }
     };
 
     const cfg = configs[name];
@@ -56,13 +57,20 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     let content = opts.kto ? `<@${opts.kto}>` : "";
 
     // Budowanie treści
-    if (name === 'zagrozenie') {
-    //  content = "@everyone";
+    if (name === 'szkolenie') {
+      const isZdane = opts.wynik === 'zdane';
+      cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
+      finalColor = isZdane ? 5763719 : 15158332;
+      content = `<@${opts.kto_zdawal}>`;
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
+    }
+    else if (name === 'zagrozenie') {
+      // content = "@everyone";
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-    //  content = "@everyone";
+      // content = "@everyone";
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
