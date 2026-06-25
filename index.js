@@ -153,14 +153,14 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     let description = "", content = opts.kto ? `<@${opts.kto}>` : "", components = [];
     let finalColor = cfg.color;
 
-    if (name === 'urlop') {
-      description = `**Rozpoczęcie Urlopu:** ${opts.rozpoczecie}\n**Zakończenie Urlopu:** ${opts.zakonczenie}\n**Czas Urlopu:** ${opts.czas} dni\n**Powód:** ${opts.powod}\n\n**Wniosek złożony przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
+if (name === 'urlop') {
+      description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${opts.czas} dni\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
       components = [{ type: 1, components: [
         { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
         { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
       ]}];
-      await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
-    } 
+      await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany.");
+    }
     else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
       cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
