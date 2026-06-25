@@ -29,7 +29,35 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   const interaction = req.body;
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
-  // --- 1. OBSŁUGA KLIKNIĘĆ W PRZYCISKI ---
+  // --- 1. OBSŁUGA MODALA (POWÓD ODRZUCENIA) ---
+  if (interaction.type === 5) { // 5 = MODAL_SUBMIT
+    const customId = interaction.data.custom_id;
+    
+    if (customId.startsWith('modal_reject_')) {
+      const targetUserId = customId.replace('modal_reject_', '');
+      const powod = interaction.data.components[0].components[0].value;
+      const adminName = interaction.member.user.username;
+      const originalEmbed = interaction.message.embeds[0];
+
+      // Powiadomienie DM do użytkownika
+      await sendDM(targetUserId, `❌ Twój wniosek urlopowy został ODRZUCONY przez administratora **${adminName}**.\n**Powód:** ${powod}`);
+      
+      // Aktualizacja wiadomości na kanale
+      return res.json({
+        type: InteractionResponseType.UPDATE_MESSAGE,
+        data: {
+          embeds: [{ 
+            title: "URLOP ODRZUCONY", 
+            color: 15158332, 
+            description: originalEmbed.description + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` 
+          }],
+          components: [] // Usunięcie przycisków
+        }
+      });
+    }
+  }
+
+  // --- 2. OBSŁUGA KLIKNIĘĆ W PRZYCISKI ---
   if (interaction.type === InteractionType.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id;
 
@@ -46,14 +74,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       const [, action, targetUserId] = customId.split('_');
       const originalEmbed = interaction.message.embeds[0];
-      let newTitle = "";
-      let newColor = 0;
+      const adminName = interaction.member.user.username;
 
       if (action === 'accept') {
-        newTitle = "URLOP ZAAKCEPTOWANY";
-        newColor = 5763719; 
-        
-        await sendDM(targetUserId, "🎉 Twój wniosek o urlop został ZAAKCEPTOWANY!");
+        // Akceptacja od razu aktualizuje embed i wysyła DM
+        await sendDM(targetUserId, `🎉 Twój wniosek o urlop został ZAAKCEPTOWANY przez administratora **${adminName}**!`);
 
         const urlopRoleId = process.env.URLOP_ROLE_ID;
         if (urlopRoleId && interaction.guild_id) {
@@ -62,23 +87,42 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
             headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
           });
         }
-      } else {
-        newTitle = "URLOP ODRZUCONY";
-        newColor = 15158332;
-        await sendDM(targetUserId, "❌ Twój wniosek o urlop został ODRZUCONY.");
-      }
 
-      return res.json({
-        type: InteractionResponseType.UPDATE_MESSAGE,
-        data: {
-          embeds: [{ title: newTitle, color: newColor, description: originalEmbed.description }],
-          components: [] 
-        }
-      });
+        return res.json({
+          type: InteractionResponseType.UPDATE_MESSAGE,
+          data: {
+            embeds: [{ 
+              title: "URLOP ZAAKCEPTOWANY", 
+              color: 5763719, 
+              description: originalEmbed.description + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>`
+            }],
+            components: [] 
+          }
+        });
+      } else if (action === 'reject') {
+        // Odrzucenie otwiera formularz (Modal)
+        return res.json({
+          type: 9, // 9 = MODAL
+          data: {
+            title: "Odrzucenie urlopu",
+            custom_id: `modal_reject_${targetUserId}`,
+            components: [{
+              type: 1, 
+              components: [{
+                type: 4, // 4 = TEXT_INPUT
+                custom_id: "powod_input", 
+                label: "Podaj powód odrzucenia:", 
+                style: 2, // 2 = PARAGRAPH (wielolinijkowy tekst)
+                required: true
+              }]
+            }]
+          }
+        });
+      }
     }
   }
 
-  // --- 2. OBSŁUGA KOMEND ---
+  // --- 3. OBSŁUGA KOMEND ---
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name, options } = interaction.data;
     const opts = {};
@@ -143,10 +187,15 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
     }
     else if (name === 'zagrozenie') {
+      if (opts.poziom) {
+        const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
+        finalColor = colorMap[opts.poziom] || cfg.color;
+      }
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
+      finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
