@@ -304,12 +304,19 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       ]}];
       await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
     }
-    else if (name === 'szkolenie') {
+else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
       cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
       finalColor = isZdane ? 5763719 : 15158332;
       content = `<@${opts.kto_zdawal}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
+
+      if (isZdane) {
+        await sendToGoogleSheet({
+          kto_id: opts.kto_zdawal, 
+          szkolenie: opts.szkolenie 
+        });
+      }
     }
     else if (name === 'zagrozenie') {
      // content = "@everyone"; 
