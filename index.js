@@ -59,7 +59,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   }
 
   // --- 1. OBSŁUGA MODALA (POWÓD ODRZUCENIA) ---
-  if (interaction.type === 5) {
+  if (interaction.type === 5) { // 5 = MODAL_SUBMIT
     const customId = interaction.data.custom_id;
     if (customId.startsWith('modal_reject_')) {
       const targetUserId = customId.replace('modal_reject_', '');
@@ -87,9 +87,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === InteractionType.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id;
     if (customId.startsWith('urlop_')) {
+      // Zabezpieczenie: Tylko admin może klikać
       const memberRoles = interaction.member.roles || [];
       if (guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
-        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
+        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Tylko administratorzy mogą rozpatrywać wnioski urlopowe.", flags: 64 } });
       }
 
       const [, action, targetUserId] = customId.split('_');
@@ -124,6 +125,26 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
+    // Weryfikacja kanału dla urlopu
+    if (name === 'urlop' && interaction.channel_id !== guildConfig.CHANNELS.URLOP) {
+      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `❌ Komenda /urlop jest dostępna tylko na kanale <#${guildConfig.CHANNELS.URLOP}>.`, flags: 64 } });
+    }
+
+    // Weryfikacja daty dla urlopu
+    if (name === 'urlop') {
+      const dateRegex = /^\d{2}\.\d{2}\.\d{4}$/;
+      if (!dateRegex.test(opts.rozpoczecie) || !dateRegex.test(opts.zakonczenie)) {
+        await sendDM(interaction.member.user.id, "❌ Błędny format daty! Użyj formatu DD.MM.RRRR (np. 25.06.2026).");
+        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędny format daty! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
+      }
+    }
+
+    // Walidacja uprawnień do reszty komend
+    const memberRoles = interaction.member.roles || [];
+    if (name !== 'urlop' && guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
+      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
+    }
+
     // Mapowanie komend na kanały z configu danego serwera
     const configs = {
       awans: { title: 'AWANS', color: 3066993, channel: guildConfig.CHANNELS.AWANS },
@@ -141,26 +162,23 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
 
-    // Walidacja uprawnień
-    const memberRoles = interaction.member.roles || [];
-    if (name !== 'urlop' && guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
-      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
-    }
-
     const now = new Date();
     const data = `${now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" })} ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}`;
     
     let description = "", content = opts.kto ? `<@${opts.kto}>` : "", components = [];
     let finalColor = cfg.color;
 
-if (name === 'urlop') {
-      description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${opts.czas} dni\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
+    if (name === 'urlop') {
+      const dni = parseInt(opts.czas);
+      const dniLabel = dni === 1 ? "dzień" : "dni";
+
+      description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
       components = [{ type: 1, components: [
         { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
         { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
       ]}];
-      await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany.");
-    }
+      await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
+    } 
     else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
       cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
