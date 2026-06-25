@@ -15,30 +15,38 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
-    // Konfiguracja nazw, kolorów i kanałów
+    // Konfiguracja bazowa
     const configs = {
       awans: { title: 'AWANS', color: 3066993, channel: process.env.CHANNEL_ID_AWANS },
       degradacja: { title: 'DEGRADACJA', color: 15158332, channel: process.env.CHANNEL_ID_DEGRADACJA },
       zawieszenie: { title: 'ZAWIESZENIE', color: 16753920, channel: process.env.CHANNEL_ID_ZAWIESZENIE },
       zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: process.env.CHANNEL_ID_ZAGROZENIE },
-      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 3447003, channel: process.env.CHANNEL_ID_ZAGROZENIE }
+      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: process.env.CHANNEL_ID_ZAGROZENIE }
     };
 
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
 
+    // Logika kolorów
+    let finalColor = cfg.color;
+    if (name === 'zagrozenie' && opts.poziom) {
+      const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
+      finalColor = colorMap[opts.poziom] || cfg.color;
+    }
+    if (name === 'odwolaj_zagrozenie') finalColor = 5763719; // Wymuszony zielony
+
     const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw" }).substring(0, 16);
     let description = "";
-    let content = opts.kto ? `<@${opts.kto}>` : ""; // Ping użytkownika
+    let content = opts.kto ? `<@${opts.kto}>` : "";
 
-    // Logika budowania treści
+    // Budowanie treści
     if (name === 'zagrozenie') {
-      content = "@everyone";
+    //  content = "@everyone";
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-      content = "@everyone";
+    //  content = "@everyone";
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
@@ -48,15 +56,15 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
     }
 
-    // Wysyłka
+    // Wysyłka do Discorda
     await fetch(`https://discord.com/api/v10/channels/${cfg.channel}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
-      body: JSON.stringify({ content: content, embeds: [{ title: cfg.title, color: cfg.color, description }] })
+      body: JSON.stringify({ content: content, embeds: [{ title: cfg.title, color: finalColor, description }] })
     });
 
-    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Operacja ${name} została wykonana!`, flags: 64 } });
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Operacja ${name} wykonana!`, flags: 64 } });
   }
 });
 
-app.listen(PORT, () => console.log(`🤖 Bot działa!`));
+app.listen(PORT, () => console.log(`🤖 Bot działa na porcie ${PORT}`));
