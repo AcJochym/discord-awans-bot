@@ -15,30 +15,32 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
-    // Konfiguracja dla komend
-    const isAwans = name === 'awans';
-    const isDegradacja = name === 'degradacja';
-    const isZawieszenie = name === 'zawieszenie';
-
-    const title = isAwans ? 'AWANS' : (isDegradacja ? 'DEGRADACJA' : 'ZAWIESZENIE');
-    const color = isAwans ? 3066993 : (isDegradacja ? 15158332 : 16753920); // Zielony, Czerwony, Pomarańczowy
-    const targetChannelId = isAwans ? process.env.CHANNEL_ID_AWANS : (isDegradacja ? process.env.CHANNEL_ID_DEGRADACJA : process.env.CHANNEL_ID_ZAWIESZENIE);
+    // 1. Logika nazw i kolorów
+    const title = name.toUpperCase();
+    const color = name === 'awans' ? 3066993 : (name === 'degradacja' ? 15158332 : 16753920);
     
+    // 2. Wybór kanału (Upewnij się, że masz te zmienne w Railway!)
+    const channelMap = {
+      awans: process.env.CHANNEL_ID_AWANS,
+      degradacja: process.env.CHANNEL_ID_DEGRADACJA,
+      zawieszenie: process.env.CHANNEL_ID_ZAWIESZENIE
+    };
+    const targetChannelId = channelMap[name];
+
+    // 3. Budowanie opisu
     const ktoPing = opts.kto ? `<@${opts.kto}>` : '';
-    const imieNazwisko = opts.imie_nazwisko || 'Nieznany';
-    const powod = opts.powod || 'Brak';
     const nadawca = `<@${interaction.member.user.id}>`;
-    const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).replace(',', '');
-
-    // Generowanie opisu w zależności od komendy jebać disa
-    let description = `**Kto: ${imieNazwisko}**\n**Powód: ${powod}**\n`;
+    const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw" }).substring(0, 16);
     
-    if (isZawieszenie) {
-      description += `**Czas zawieszenia: ${opts.czas}**\n**Zawieszono przez: ${nadawca}**\n\n**${data}**`;
+    let description = `**Kto: ${opts.imie_nazwisko || 'Brak'}**\n**Powód: ${opts.powod || 'Brak'}**\n`;
+    
+    if (name === 'zawieszenie') {
+      description += `**Czas zawieszenia: ${opts.czas || 'Brak'}**\n**Zawieszono przez: ${nadawca}**\n\n**${data}**`;
     } else {
-      description += `**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: ${nadawca}**\n\n**${data}**`;
+      description += `**Nowy stopień: ${opts.stopien || 'Brak'}**\n**Nowy numer odznaki: ${opts.odznaka || 'Brak'}**\n**Nadane przez: ${nadawca}**\n\n**${data}**`;
     }
 
+    // 4. Wysłanie wiadomości
     await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
