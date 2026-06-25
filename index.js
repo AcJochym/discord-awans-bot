@@ -15,48 +15,38 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
-    // Wybór ustawień w zależności od komendy
+    // Konfiguracja dla komend
     const isAwans = name === 'awans';
-    const title = isAwans ? 'AWANS' : 'DEGRADACJA';
-    const color = isAwans ? 3066993 : 15158332;
-    
-    // Pobranie odpowiedniego kanału ze zmiennych środowiskowych
-    const targetChannelId = isAwans ? process.env.CHANNEL_ID_AWANS : process.env.CHANNEL_ID_DEGRADACJA;
+    const isDegradacja = name === 'degradacja';
+    const isZawieszenie = name === 'zawieszenie';
+
+    const title = isAwans ? 'AWANS' : (isDegradacja ? 'DEGRADACJA' : 'ZAWIESZENIE');
+    const color = isAwans ? 3066993 : (isDegradacja ? 15158332 : 16753920); // Zielony, Czerwony, Pomarańczowy
+    const targetChannelId = isAwans ? process.env.CHANNEL_ID_AWANS : (isDegradacja ? process.env.CHANNEL_ID_DEGRADACJA : process.env.CHANNEL_ID_ZAWIESZENIE);
     
     const ktoPing = opts.kto ? `<@${opts.kto}>` : '';
     const imieNazwisko = opts.imie_nazwisko || 'Nieznany';
-    const powod = opts.powod || 'Brak powodu';
-    const stopien = opts.stopien || 'Brak stopnia';
-    const odznaka = opts.odznaka || 'Brak odznaki';
+    const powod = opts.powod || 'Brak';
     const nadawca = `<@${interaction.member.user.id}>`;
+    const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).replace(',', '');
+
+    // Generowanie opisu w zależności od komendy
+    let description = `**Kto: ${imieNazwisko}**\n**Powód: ${powod}**\n`;
     
-    const data = new Date().toLocaleString("pl-PL", { 
-      timeZone: "Europe/Warsaw",
-      day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
-    }).replace(',', '');
+    if (isZawieszenie) {
+      description += `**Czas zawieszenia: ${opts.czas}**\n**Zawieszono przez: ${nadawca}**\n\n**${data}**`;
+    } else {
+      description += `**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: ${nadawca}**\n\n**${data}**`;
+    }
 
-    const embedDescription = 
-      `**Kto: ${imieNazwisko}**\n` +
-      `**Powód: ${powod}**\n` +
-      `**Nowy stopień: ${stopien}**\n` +
-      `**Nowy numer odznaki: ${odznaka}**\n` +
-      `**Nadane przez: ${nadawca}**\n\n` +
-      `**${data}**`;
-
-    const response = await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
+    await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
-      body: JSON.stringify({ content: ktoPing, embeds: [{ title, color, description: embedDescription }] })
+      body: JSON.stringify({ content: ktoPing, embeds: [{ title, color, description }] })
     });
 
-    if (response.ok) {
-      return res.json({
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: { content: `✅ ${title} została pomyślnie wysłana!`, flags: 64 }
-      });
-    }
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ ${title} wysłana!`, flags: 64 } });
   }
-  res.status(400).json({ error: 'Unknown interaction' });
 });
 
-app.listen(PORT, () => console.log(`🤖 Bot działa na porcie ${PORT}`));
+app.listen(PORT);
