@@ -7,24 +7,53 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // --- TABELA KONFIGURACJI SERWERÓW ---
-// Tutaj wpisujesz ID serwerów i ich kanały. Tylko te serwery będą działać.
+// W REQUIRED_ROLE_IDS podajesz role w tablicy, np. ["ID_1", "ID_2", "ID_3"]
 const serverConfigs = {
+  //Field Training Division - TESTOWE
   "1476244145440948256": {
-    REQUIRED_ROLE_ID: "1476244145923297429",
+    REQUIRED_ROLE_IDS: ["1476244145923297429", "TUTAJ_MOZESZ_DODAC_DRUGA_ROLE_TESTOWA"],
     CHANNELS: {
       AWANS: "1476244147202428977", DEGRADACJA: "1476244147202428977", ZAWIESZENIE: "1476244147202428977", 
       ZAGROZENIE: "1476244147202428977", SZKOLENIE: "1476244147202428977", URLOP: "1476244147202428977", 
       ZWOLNIENIA: "1476244147202428977", NAGANA: "1476244147202428977", KARY: "1476244147202428977"
     }
   },
-  "ID_TWOJEGO_SERWERA_2": {
-    REQUIRED_ROLE_ID: "ID_ROLI_ADMINA",
+  //LSPD
+  "1344364720605499442": {
+    REQUIRED_ROLE_IDS: ["1505571491180314956", "1344373183079256064", "1344664019751014543"],
+    CHANNELS: {
+      AWANS: "1344379382013362238", DEGRADACJA: "1344379443858247700", ZAWIESZENIE: "1344379535436546099", 
+      ZAGROZENIE: "1417946459378024519", SZKOLENIE: "1344386111975329925", URLOP: "1344379129193173094", 
+      ZWOLNIENIA: "1344379809278595114", NAGANA: "1519663613386952774", KARY: "1519663613386952774"
+    }
+  },
+  //BCSO
+  "ID_TWOJEGO_SERWERA_3": {
+    REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
       ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
     }
-  }
+  },
+  //LSSD
+  "ID_TWOJEGO_SERWERA_4": {
+    REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
+    CHANNELS: {
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+    }
+  },
+  //DOC
+  "ID_TWOJEGO_SERWERA_5": {
+    REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
+    CHANNELS: {
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU"
+    }
+  },
 };
 
 // Funkcja pomocnicza do wysyłania wiadomości prywatnych (DM)
@@ -87,9 +116,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === InteractionType.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id;
     if (customId.startsWith('urlop_')) {
-      // Zabezpieczenie: Tylko admin może klikać
+      // Zabezpieczenie: Sprawdzanie czy użytkownik ma przynajmniej jedną z ról w tablicy REQUIRED_ROLE_IDS
       const memberRoles = interaction.member.roles || [];
-      if (guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
+      const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
+
+      if (!hasAdminRole) {
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Tylko administratorzy mogą rozpatrywać wnioski urlopowe.", flags: 64 } });
       }
 
@@ -139,9 +170,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
     }
 
-    // Walidacja uprawnień do reszty komend
+    // Walidacja uprawnień do reszty komend (sprawdzanie wielu ról z tablicy)
     const memberRoles = interaction.member.roles || [];
-    if (name !== 'urlop' && guildConfig.REQUIRED_ROLE_ID && !memberRoles.includes(guildConfig.REQUIRED_ROLE_ID)) {
+    const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
+
+    if (name !== 'urlop' && !hasAdminRole) {
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
     }
 
