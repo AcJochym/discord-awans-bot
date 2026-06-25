@@ -248,8 +248,9 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
+    // Tutaj wpadają komendy awans i degradacja - zmieniono gwiazdki na normalny tekst po ":"
     else {
-      description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
 
     await fetch(`https://discord.com/api/v10/channels/${cfg.channel}/messages`, {
