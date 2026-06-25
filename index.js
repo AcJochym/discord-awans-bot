@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
-const BOT_OWNER_ID = "TUTAJ_WKLEJ_SWOJE_ID_DISCORD"; 
+const BOT_OWNER_ID = "419910833112350720"; 
 
 // --- TABELA KONFIGURACJI SERWERÓW ---
 const serverConfigs = {
