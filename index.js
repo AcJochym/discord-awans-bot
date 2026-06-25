@@ -15,6 +15,7 @@ const serverConfigs = {
   "1476244145440948256": {
     REQUIRED_ROLE_IDS: ["1476244145923297429", "TUTAJ_MOZESZ_DODAC_DRUGA_ROLE_TESTOWA"],
     PING_ROLE_ID: "ID",
+    WEBHOOK_URL: "https://discord.com/api/webhooks/1519785641104113715/wCSUwsd3oJ9WfA3ZfxgtwGeTW6dXCkH82qhImTyt2SiEiwjrjmbDMD1BgGtOtGap8dBk", // <-- LOGI SERWERA 1
     CHANNELS: {
       AWANS: "1476244147202428977", DEGRADACJA: "1476244147202428977", ZAWIESZENIE: "1476244147202428977", 
       ZAGROZENIE: "1476244147202428977", SZKOLENIE: "1476244147202428977", URLOP: "1476244147202428977", 
@@ -25,6 +26,7 @@ const serverConfigs = {
   "1344364720605499442": {
     REQUIRED_ROLE_IDS: ["1505571491180314956", "1344373183079256064", "1344664019751014543", "1519781307792756736"],
     PING_ROLE_ID: "1344364929775304775",
+    WEBHOOK_URL: "https://discord.com/api/webhooks/1519785437550350496/Psai7Bt6aFVAhbWitjAwjhpRZf7jvqmuB-F2X2ydBj4xrH6YzsqBwOD_pWFpdU2HO5UY", // <-- LOGI SERWERA 2
     CHANNELS: {
       AWANS: "1344379382013362238", DEGRADACJA: "1344379443858247700", ZAWIESZENIE: "1344379535436546099", 
       ZAGROZENIE: "1417946459378024519", SZKOLENIE: "1344386111975329925", URLOP: "1344379129193173094", 
@@ -35,6 +37,7 @@ const serverConfigs = {
   "ID_TWOJEGO_SERWERA_3": {
     REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
     PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
+    WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
@@ -45,6 +48,7 @@ const serverConfigs = {
   "ID_TWOJEGO_SERWERA_4": {
     REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
     PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
+    WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
@@ -55,6 +59,7 @@ const serverConfigs = {
   "ID_TWOJEGO_SERWERA_5": {
     REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
     PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
+    WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
     CHANNELS: {
       AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
       ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
@@ -62,6 +67,20 @@ const serverConfigs = {
     }
   },
 };
+
+// Funkcja wysyłająca logi na Webhook
+async function sendWebhookLog(webhookUrl, embed) {
+  if (!webhookUrl || webhookUrl === "TUTAJ_LINK_DO_WEBHOOKA") return;
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] })
+    });
+  } catch (e) {
+    console.error("Błąd wysyłania logów na webhook:", e);
+  }
+}
 
 async function sendToGoogleSheet(data) {
   const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzD-lrDugAFYwg6UPCmRRvvfvc2up1ZpaxcTX0LgW1latpIV1JOUt5L9bfiMfRO5YUh/exec"; 
@@ -118,6 +137,13 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       await sendDM(targetUserId, `❌ Twój wniosek urlopowy został **ODRZUCONY** przez administratora **${adminName}**.\n**Powód:** ${powod}`);
       
+      // LOGOWANIE ODRZUCENIA
+      await sendWebhookLog(guildConfig.WEBHOOK_URL, {
+        title: "📝 Akcja: Odrzucenie Urlopu",
+        color: 15158332,
+        description: `Administrator <@${interaction.member.user.id}> odrzucił wniosek urlopowy użytkownika <@${targetUserId}>.\n**Powód:** ${powod}`
+      });
+      
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
@@ -136,7 +162,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === InteractionType.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id;
     if (customId.startsWith('urlop_')) {
-      // Zabezpieczenie: Sprawdzanie czy użytkownik ma przynajmniej jedną z ról w tablicy REQUIRED_ROLE_IDS
       const memberRoles = interaction.member.roles || [];
       const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
 
@@ -150,6 +175,14 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       if (action === 'accept') {
         await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
+        
+        // LOGOWANIE AKCEPTACJI
+        await sendWebhookLog(guildConfig.WEBHOOK_URL, {
+          title: "📝 Akcja: Akceptacja Urlopu",
+          color: 5763719,
+          description: `Administrator <@${interaction.member.user.id}> zaakceptował wniosek urlopowy użytkownika <@${targetUserId}>.`
+        });
+
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
           data: {
@@ -176,14 +209,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
-    // --- BLOKADA DLA KOMEND WŁAŚCICIELA (/pomoc oraz /pomoc_urlop) ---
+    // --- BLOKADA DLA KOMEND WŁAŚCICIELA ---
     if (name === 'pomoc' || name === 'pomoc_urlop') {
-      // Jeśli ktoś inny wpisze komendę – dostanie ukrytą wiadomość z błędem
       if (interaction.member.user.id !== BOT_OWNER_ID) {
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } });
       }
 
-      // Treść komendy pomoc – usunięto flage 64 (będzie publiczna dla wszystkich)
       if (name === 'pomoc') {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -211,7 +242,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         });
       }
 
-      // Treść komendy pomoc_urlop – usunięto flage 64 (będzie publiczna dla wszystkich)
       if (name === 'pomoc_urlop') {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -254,7 +284,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
     }
 
-    // Walidacja uprawnień do reszty komend (sprawdzanie wielu ról z tablicy)
+    // Walidacja uprawnień do reszty komend
     const memberRoles = interaction.member.roles || [];
     const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
 
@@ -290,12 +320,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const dni = parseInt(opts.czas);
       const dniLabel = dni === 1 ? "dzień" : "dni";
 
-      // --- DODAJ TO: Przesłanie danych do arkusza ---
       await sendToGoogleSheet({
         kto_id: interaction.member.user.id,
         zakonczenie: opts.zakonczenie
       });
-      // ---------------------------------------------
 
       description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
       components = [{ type: 1, components: [
@@ -304,7 +332,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       ]}];
       await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
     }
-else if (name === 'szkolenie') {
+    else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
       cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
       finalColor = isZdane ? 5763719 : 15158332;
@@ -319,7 +347,6 @@ else if (name === 'szkolenie') {
       }
     }
     else if (name === 'zagrozenie') {
-     // content = "@everyone"; 
       if (opts.poziom) {
         const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
         finalColor = colorMap[opts.poziom] || cfg.color;
@@ -328,7 +355,6 @@ else if (name === 'szkolenie') {
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-     // content = "@everyone";
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
@@ -347,12 +373,10 @@ else if (name === 'szkolenie') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
-      else if (name === 'zebranie') {
-      // Pobieramy ID roli z konfiguracji
+    else if (name === 'zebranie') {
       const roleId = guildConfig.PING_ROLE_ID;
       content = roleId ? `<@&${roleId}>` : "@everyone"; 
       
-      // Formatowanie zgodne z obrazkiem image_3f9d06.png
       description = `**ZEBRANIE DEPARTAMENTU** <@&${roleId}>\n` +
                     `**Data:** ${opts.data}\n` +
                     `**Godzina:** ${opts.godzina}\n` +
@@ -363,10 +387,29 @@ else if (name === 'szkolenie') {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
 
+    // Wysłanie wiadomości na odpowiedni kanał
     await fetch(`https://discord.com/api/v10/channels/${cfg.channel}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
       body: JSON.stringify({ content, embeds: [{ title: cfg.title, color: finalColor, description }], components })
+    });
+
+    // --- LOGOWANIE UŻYCIA KOMENDY ---
+    // Formatowanie opcji komendy do ładnego tekstu
+    let opcjeTekst = "";
+    if (Object.keys(opts).length > 0) {
+      for (const [key, value] of Object.entries(opts)) {
+        opcjeTekst += `**${key}:** ${value}\n`;
+      }
+    } else {
+      opcjeTekst = "Brak argumentów.";
+    }
+
+    await sendWebhookLog(guildConfig.WEBHOOK_URL, {
+      title: `🛠️ Użyto komendy: /${name}`,
+      color: 3447003,
+      description: `**Użytkownik:** <@${interaction.member.user.id}>\n**Kanał:** <#${interaction.channel_id}>\n\n**Przekazane dane:**\n${opcjeTekst}`,
+      timestamp: new Date().toISOString()
     });
 
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
