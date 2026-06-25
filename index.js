@@ -6,6 +6,25 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
+// Funkcja pomocnicza do wysyłania wiadomości prywatnych (DM)
+async function sendDM(userId, content) {
+  try {
+    const channelRes = await fetch(`https://discord.com/api/v10/users/@me/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
+      body: JSON.stringify({ recipient_id: userId })
+    });
+    const channel = await channelRes.json();
+    await fetch(`https://discord.com/api/v10/channels/${channel.id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
+      body: JSON.stringify({ content })
+    });
+  } catch (e) {
+    console.error("Nie udało się wysłać DM:", e);
+  }
+}
+
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
   const interaction = req.body;
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
@@ -18,7 +37,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const allowedRoleId = process.env.REQUIRED_ROLE_ID;
       const memberRoles = interaction.member.roles || [];
       
-      // Sprawdzenie, czy osoba klikająca ma rangę zarządczą
       if (allowedRoleId && !memberRoles.includes(allowedRoleId)) {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -33,9 +51,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       if (action === 'accept') {
         newTitle = "URLOP ZAAKCEPTOWANY";
-        newColor = 5763719; // Zielony
+        newColor = 5763719; 
+        
+        await sendDM(targetUserId, "🎉 Twój wniosek o urlop został ZAAKCEPTOWANY!");
 
-        // Automatyczne nadawanie rangi użytkownikowi, który wnioskował o urlop
         const urlopRoleId = process.env.URLOP_ROLE_ID;
         if (urlopRoleId && interaction.guild_id) {
           await fetch(`https://discord.com/api/v10/guilds/${interaction.guild_id}/members/${targetUserId}/roles/${urlopRoleId}`, {
@@ -45,15 +64,15 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         }
       } else {
         newTitle = "URLOP ODRZUCONY";
-        newColor = 15158332; // Czerwony
+        newColor = 15158332;
+        await sendDM(targetUserId, "❌ Twój wniosek o urlop został ODRZUCONY.");
       }
 
-      // Aktualizacja wiadomości na Discordzie (zmiana wyglądu embeda i usunięcie przycisków)
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
           embeds: [{ title: newTitle, color: newColor, description: originalEmbed.description }],
-          components: [] // Pusta tablica usuwa przyciski, żeby nikt nie kliknął dwa razy
+          components: [] 
         }
       });
     }
@@ -63,7 +82,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name, options } = interaction.data;
 
-    // Zabezpieczenie rangi dla komend innych niż /urlop (urlop może pisać każdy)
     const allowedRoleId = process.env.REQUIRED_ROLE_ID;
     const memberRoles = interaction.member.roles || [];
     if (name !== 'urlop' && allowedRoleId && !memberRoles.includes(allowedRoleId)) {
@@ -73,7 +91,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       });
     }
 
-    // Blokada kanałowa tylko dla komendy /urlop
     if (name === 'urlop' && interaction.channel_id !== process.env.CHANNEL_ID_URLOP) {
       return res.json({
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -84,7 +101,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
-    // Konfiguracja bazowa
     const configs = {
       awans: { title: 'AWANS', color: 3066993, channel: process.env.CHANNEL_ID_AWANS },
       degradacja: { title: 'DEGRADACJA', color: 15158332, channel: process.env.CHANNEL_ID_DEGRADACJA },
@@ -98,7 +114,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
 
-    // Logika kolorów
     let finalColor = cfg.color;
     if (name === 'zagrozenie' && opts.poziom) {
       const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
@@ -106,7 +121,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
     if (name === 'odwolaj_zagrozenie') finalColor = 5763719;
 
-    // Formatowanie daty serwerowej
     const now = new Date();
     const datePart = now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" });
     const timePart = now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' });
@@ -116,18 +130,17 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     let content = opts.kto ? `<@${opts.kto}>` : "";
     let components = [];
 
-    // Budowanie treści wiadomości
     if (name === 'urlop') {
       description = `**Rozpoczęcie Urlopu:** ${opts.rozpoczecie}\n**Zakończenie Urlopu:** ${opts.zakonczenie}\n**Czas Urlopu:** ${opts.czas}\n**Powód:** ${opts.powod}\n\n**Wniosek złożony przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
-      
-      // Dodanie przycisków akceptacji/odrzucenia przekazujących ID wnioskodawcy
       components = [{
-        type: 1, // ACTION_ROW
+        type: 1,
         components: [
           { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
           { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
         ]
       }];
+      // Powiadomienie przy wysłaniu wniosku
+      await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
     }
     else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
@@ -137,12 +150,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
     }
     else if (name === 'zagrozenie') {
-      // content = "@everyone";
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-      // content = "@everyone";
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
@@ -152,7 +163,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
     }
 
-    // Wysłanie gotowego formularza z przyciskami (jeśli dotyczy urlopu)
     await fetch(`https://discord.com/api/v10/channels/${cfg.channel}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
