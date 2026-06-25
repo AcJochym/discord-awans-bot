@@ -11,6 +11,17 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
+    // --- ZABEZPIECZENIE ROLI ---
+    const allowedRoleId = process.env.REQUIRED_ROLE_ID;
+    const memberRoles = interaction.member.roles || [];
+    
+    if (allowedRoleId && !memberRoles.includes(allowedRoleId)) {
+      return res.json({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: "❌ Nie masz uprawnień do używania tej komendy.", flags: 64 }
+      });
+    }
+
     const { name, options } = interaction.data;
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
@@ -35,7 +46,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
     if (name === 'odwolaj_zagrozenie') finalColor = 5763719;
 
-    // Poprawiona data i godzina (format DD.MM.YYYY HH:MM)
+    // Poprawiona data i godzina
     const now = new Date();
     const datePart = now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" });
     const timePart = now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' });
@@ -46,12 +57,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
     // Budowanie treści
     if (name === 'zagrozenie') {
-     // content = "@everyone";
+      content = "@everyone";
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-    //  content = "@everyone";
+      content = "@everyone";
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
