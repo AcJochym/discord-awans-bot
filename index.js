@@ -6,8 +6,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
+// --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
+const BOT_OWNER_ID = "TUTAJ_WKLEJ_SWOJE_ID_DISCORD"; 
+
 // --- TABELA KONFIGURACJI SERWERÓW ---
-// W REQUIRED_ROLE_IDS podajesz role w tablicy, np. ["ID_1", "ID_2", "ID_3"]
 const serverConfigs = {
   //Field Training Division - TESTOWE
   "1476244145440948256": {
@@ -156,6 +158,68 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
+    // --- BLOKADA DLA KOMEND WŁAŚCICIELA (/pomoc oraz /pomoc_urlop) ---
+    if (name === 'pomoc' || name === 'pomoc_urlop') {
+      if (interaction.member.user.id !== BOT_OWNER_ID) {
+        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } });
+      }
+
+      if (name === 'pomoc') {
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            embeds: [{
+              title: "📚 Panel Pomocy — Komendy Frakcyjne",
+              color: 3447003,
+              description: "Oto wykaz działania wszystkich komend administracyjnych w bocie:\n\n" +
+                "• **/awans** — Służy do awansowania pracownika. Generuje oficjalny komunikat na kanale awansów z nowym stopniem oraz zaktualizowanym numerem odznaki.\n" +
+                "• **/degradacja** — Służy do obniżenia stopnia pracownika. Wysyła sformatowaną wiadomość na odpowiedni kanał.\n" +
+                "• **/zawieszenie** — Służy do zawieszenia członka struktur na określony czas. Wymaga podania imienia, nazwiska, powodu oraz ram czasowych.\n" +
+                "• **/zwolnij** — Usuwa pracownika z struktur frakcji, wysyłając powiadomienie do logów oraz oznaczając zwolnioną osobę.\n" +
+                "• **/nagana** — Nadaje oficjalną naganę do akt. W komendzie należy wskazać, która to już nagana z kolei (np. 1/3, 2/3).\n" +
+                "• **/kara_finansowa** — Nakłada na pracownika obowiązek zapłaty określonej kwoty jako karę dyscyplinarną.\n" +
+                "• **/szkolenie** — Pozwala udokumentować przebieg i wynik egzaminu/szkolenia. W zależności od wybranego wyniku (zdane/niezdane) embed automatycznie dobiera odpowiedni kolor (zielony/czerwony).\n" +
+                "• **/zagrozenie** — Wprowadza na serwerze stan zagrożenia. Automatycznie oznacza rolę `@everyone` (wyciszone w logach) i zmienia kolor embedu zależnie od wybranego poziomu (Zielony, Pomarańczowy, Czerwony, Czarny).\n" +
+                "• **/odwolaj_zagrozenie** — Przywraca normalny stan funkcjonowania serwera frakcji, informując o tym wszystkich członków.\n\n" +
+                "⚙️ **Jak zarządzać wnioskami urlopowymi (Akceptacja/Odrzucenie):**\n" +
+                "Kiedy użytkownik poprawnie wyśle wniosek urlopowy, pod wiadomością pojawią się dwa duże przyciski:\n" +
+                "1. **AKCEPTUJ (Zielony)** — Kliknięcie przycisku natychmiast zmienia kolor całego wniosku na zielony, usuwa przyciski z kanału (żeby nikt nie kliknął drugi raz) i automatycznie wysyła do pracownika prywatną wiadomość (DM) o pozytywnym rozpatrzeniu.\n" +
+                "2. **ODRZUĆ (Czerwony)** — Po kliknięciu bot wyświetli na ekranie wyskakujące okienko (Modal). Administrator **musi** wpisać w nim powód odrzucenia wniosku. Po zatwierdzeniu formularza, wniosek na kanale zmieni kolor na czerwony, dopisze powód odrzucenia oraz nick administratora, a pracownik otrzyma powód odmowy bezpośrednio na swoje DM."
+            }],
+            flags: 64
+          }
+        });
+      }
+
+      if (name === 'pomoc_urlop') {
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            embeds: [{
+              title: "🌴 Instrukcja Systemu Urlopowego — Komenda /urlop",
+              color: 16753920,
+              description: "Komenda `/urlop` pozwala pracownikom bezpiecznie i poprawnie złożyć wniosek o przerwę od służby.\n\n" +
+                "📌 **Wymagane parametry komendy:**\n" +
+                "• `rozpoczecie` — Data rozpoczęcia urlopu.\n" +
+                "• `zakonczenie` — Data powrotu z urlopu.\n" +
+                "• `czas` — Ilość dni w formie cyfry (np. `7`). Bot automatycznie dopisze słowo 'dni' lub 'dzień'.\n" +
+                "• `powod` — Krótkie wyjaśnienie powodu nieobecności.\n\n" +
+                "⚠️ **Krytyczne zasady i formatowanie (Jak pisać):**\n" +
+                "Aby bot przepuścił wniosek, parametry `rozpoczecie` oraz `zakonczenie` **muszą być napisane w ścisłym formacie daty z kropkami: DD.MM.RRRR**\n" +
+                "*Przykład poprawnego zapisu:* `25.06.2026`\n" +
+                "*Przykład błędnego zapisu:* `25/06`, `25-06-2026`, `dzisiaj` — przy takich wpisach bot natychmiast przerwie komendę.\n\n" +
+                "🔄 **Przebieg składania wniosku:**\n" +
+                "1. Pracownik wpisuje `/urlop` na wyznaczonym w konfiguracji kanale urlopowym. Użycie jej w innym miejscu wywoła błąd.\n" +
+                "2. Jeśli format daty jest zły, bot anuluje proces i wysyła pracownikowi upomnienie w prywatnej wiadomości.\n" +
+                "3. Jeśli wszystko jest w porządku, pracownik dostaje na DM informację: *'Twój wniosek urlopowy został przesłany i oczekuje na akceptację.'*\n" +
+                "4. Na kanale generuje się estetyczny pomarańczowy dokument z przyciskami decyzyjnymi dla Zarządu."
+            }],
+            flags: 64
+          }
+        });
+      }
+    }
+
     // Weryfikacja kanału dla urlopu
     if (name === 'urlop' && interaction.channel_id !== guildConfig.CHANNELS.URLOP) {
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `❌ Komenda /urlop jest dostępna tylko na kanale <#${guildConfig.CHANNELS.URLOP}>.`, flags: 64 } });
@@ -220,7 +284,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
     }
     else if (name === 'zagrozenie') {
-     // content = "@everyone"; 
+      content = "@everyone"; 
       if (opts.poziom) {
         const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
         finalColor = colorMap[opts.poziom] || cfg.color;
@@ -229,7 +293,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-     // content = "@everyone";
+      content = "@everyone";
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
@@ -248,7 +312,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
-    // Tutaj wpadają komendy awans i degradacja - zmieniono gwiazdki na normalny tekst po ":"
     else {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
