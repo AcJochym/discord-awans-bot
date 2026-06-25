@@ -68,7 +68,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       body: JSON.stringify({ content: content, embeds: [{ title: cfg.title, color: finalColor, description }] })
     });
 
-    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Operacja ${name} wykonana!`, flags: 64 } });
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
   }
 });
 
