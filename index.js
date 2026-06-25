@@ -139,6 +139,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Użyj kanału urlopowego.", flags: 64 } });
     }
 
+    // Dodano konfigurację dla komendy zwolnij
     const configs = {
       awans: { title: 'AWANS', color: 3066993, channel: process.env.CHANNEL_ID_AWANS },
       degradacja: { title: 'DEGRADACJA', color: 15158332, channel: process.env.CHANNEL_ID_DEGRADACJA },
@@ -146,7 +147,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: process.env.CHANNEL_ID_ZAGROZENIE },
       odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: process.env.CHANNEL_ID_ZAGROZENIE },
       szkolenie: { title: 'SZKOLENIE', color: 3447003, channel: process.env.CHANNEL_ID_SZKOLENIE },
-      urlop: { title: 'URLOP OCZEKUJE NA AKCEPTACJE', color: 16753920, channel: process.env.CHANNEL_ID_URLOP }
+      urlop: { title: 'URLOP OCZEKUJE NA AKCEPTACJE', color: 16753920, channel: process.env.CHANNEL_ID_URLOP },
+      zwolnij: { title: 'ZWOLNIENIE', color: 15158332, channel: process.env.CHANNEL_ID_ZWOLNIENIA } 
     };
 
     const cfg = configs[name];
@@ -186,10 +188,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       content = `<@${opts.kto_zdawal}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
     }
-   else if (name === 'zagrozenie') {
-      // Dodanie wzmianki everyone
+    else if (name === 'zagrozenie') {
       content = "@everyone"; 
-      
       if (opts.poziom) {
         const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
         finalColor = colorMap[opts.poziom] || cfg.color;
@@ -198,15 +198,18 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-      // Dodanie wzmianki everyone
       content = "@everyone";
-      
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
     else if (name === 'zawieszenie') {
-      description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Czas zawieszenia: ${opts.czas}**\n**Zawieszono przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     } 
+    else if (name === 'zwolnij') {
+      // Logika w pełni odwzorowująca screena ze zwolnieniem
+      content = `<@${opts.kto}>`;
+      description = `Kto: ${opts.imie_nazwisko}\nPowód: **${opts.powod}**\nNadane przez: <@${interaction.member.user.id}>\n\n${data}`;
+    }
     else {
       description = `**Kto: ${opts.imie_nazwisko}**\n**Powód: ${opts.powod}**\n**Nowy stopień: ${opts.stopien}**\n**Nowy numer odznaki: ${opts.odznaka}**\n**Nadane przez: <@${interaction.member.user.id}>**\n\n**${data}**`;
     }
