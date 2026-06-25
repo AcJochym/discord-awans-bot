@@ -46,12 +46,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
     // Budowanie treści
     if (name === 'zagrozenie') {
-      content = "@everyone";
+     // content = "@everyone";
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'odwolaj_zagrozenie') {
-      content = "@everyone";
+    //  content = "@everyone";
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     } 
     else if (name === 'zawieszenie') {
