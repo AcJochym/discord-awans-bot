@@ -4,31 +4,25 @@ import fetch from 'node-fetch';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
-
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
 
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
   const interaction = req.body;
-
-  if (interaction.type === InteractionType.PING) {
-    return res.json({ type: InteractionResponseType.PONG });
-  }
+  if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name, options } = interaction.data;
     const opts = {};
     if (options) options.forEach((opt) => opts[opt.name] = opt.value);
 
-    // Konfiguracja dla obu komend
+    // Wybór ustawień w zależności od komendy
     const isAwans = name === 'awans';
     const title = isAwans ? 'AWANS' : 'DEGRADACJA';
-    const color = isAwans ? 3066993 : 15158332; // Zielony vs Czerwony
+    const color = isAwans ? 3066993 : 15158332;
     
-    // Dane z komendy
+    // Pobranie odpowiedniego kanału ze zmiennych środowiskowych
+    const targetChannelId = isAwans ? process.env.CHANNEL_ID_AWANS : process.env.CHANNEL_ID_DEGRADACJA;
+    
     const ktoPing = opts.kto ? `<@${opts.kto}>` : '';
     const imieNazwisko = opts.imie_nazwisko || 'Nieznany';
     const powod = opts.powod || 'Brak powodu';
@@ -41,7 +35,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
     }).replace(',', '');
 
-    // Wzór pogrubiony: wszystko wewnątrz pogrubione
     const embedDescription = 
       `**Kto: ${imieNazwisko}**\n` +
       `**Powód: ${powod}**\n` +
@@ -50,17 +43,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       `**Nadane przez: ${nadawca}**\n\n` +
       `**${data}**`;
 
-    const embed = {
-      title: title,
-      color: color,
-      description: embedDescription
-    };
-
-    // Wysłanie do kanału
-    const response = await fetch(`https://discord.com/api/v10/channels/${process.env.DISCORD_CHANNEL_ID}/messages`, {
+    const response = await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
-      body: JSON.stringify({ content: ktoPing, embeds: [embed] })
+      body: JSON.stringify({ content: ktoPing, embeds: [{ title, color, description: embedDescription }] })
     });
 
     if (response.ok) {
@@ -70,7 +56,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       });
     }
   }
-  
   res.status(400).json({ error: 'Unknown interaction' });
 });
 
