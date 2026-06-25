@@ -30,7 +30,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const nadawca = `<@${interaction.member.user.id}>`;
     const data = new Date().toLocaleString("pl-PL", { timeZone: "Europe/Warsaw", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).replace(',', '');
 
-    // Generowanie opisu w zależności od komendy
+    // Generowanie opisu w zależności od komendy jebać disa
     let description = `**Kto: ${imieNazwisko}**\n**Powód: ${powod}**\n`;
     
     if (isZawieszenie) {
