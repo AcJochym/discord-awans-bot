@@ -63,6 +63,19 @@ const serverConfigs = {
   },
 };
 
+async function sendToGoogleSheet(data) {
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzD-lrDugAFYwg6UPCmRRvvfvc2up1ZpaxcTX0LgW1latpIV1JOUt5L9bfiMfRO5YUh/exec"; 
+  try {
+    await fetch(WEB_APP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+  } catch (e) {
+    console.error("Błąd wysyłania do Google Sheets:", e);
+  }
+}
+
 // Funkcja pomocnicza do wysyłania wiadomości prywatnych (DM)
 async function sendDM(userId, content) {
   try {
@@ -277,13 +290,20 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const dni = parseInt(opts.czas);
       const dniLabel = dni === 1 ? "dzień" : "dni";
 
+      // --- DODAJ TO: Przesłanie danych do arkusza ---
+      await sendToGoogleSheet({
+        kto_id: interaction.member.user.id,
+        zakonczenie: opts.zakonczenie
+      });
+      // ---------------------------------------------
+
       description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
       components = [{ type: 1, components: [
         { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
         { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
       ]}];
       await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
-    } 
+    }
     else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
       cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
