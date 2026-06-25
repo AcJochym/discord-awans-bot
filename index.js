@@ -103,7 +103,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const adminName = interaction.member.user.username;
       const originalEmbed = interaction.message.embeds[0];
 
-      await sendDM(targetUserId, `❌ Twój wniosek urlopowy został ODRZUCONY przez administratora **${adminName}**.\n**Powód:** ${powod}`);
+      await sendDM(targetUserId, `❌ Twój wniosek urlopowy został **ODRZUCONY** przez administratora **${adminName}**.\n**Powód:** ${powod}`);
       
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
@@ -136,7 +136,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const adminName = interaction.member.user.username;
 
       if (action === 'accept') {
-        await sendDM(targetUserId, `🎉 Twój wniosek o urlop został ZAAKCEPTOWANY przez administratora **${adminName}**!`);
+        await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
           data: {
