@@ -287,7 +287,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
           embeds: [{
             title: "URLOP ODRZUCONY",
             color: 15158332,
-            description: originalEmbed.description + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` +
+            description: cleanDescriptionReject + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` +
               (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*")
           }],
           components: []
@@ -338,7 +338,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
             (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
         });
 
-        const cleanDescriptionReject = originalEmbed.description.replace(/\n\n\*Wniosek złożono: <t:\d+:R>\*/g, "");
+        const cleanDescriptionAccept = originalEmbed.description.replace(/\n\n\*Wniosek złożono: <t:\d+:R>\*/g, "");
         
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
@@ -346,7 +346,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
             embeds: [{
               title: "URLOP ZAAKCEPTOWANY",
               color: 5763719,
-              description: originalEmbed.description + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>` +
+              description: cleanDescriptionAccept + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>` +
                 (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*")
             }],
             components: []
