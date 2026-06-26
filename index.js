@@ -12,7 +12,7 @@ const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
 // --- TABELA KONFIGURACJI SERWERÓW ---
 // Cała konfiguracja (webhooki, role, kanały) jest teraz w zmiennej środowiskowej SERVER_CONFIGS_JSON
 // jako jeden zminifikowany JSON — patrz .env.example dla pełnego szablonu i README dla instrukcji.
-// Nic z tego nie jest już zapisane w kodzie, więc plik jest bezpieczny do trzymania w publicznym repo.
+// Nic z tego nie jest już zapisane w kodzie, więc plik jest bezpieczny do trzymania w publicznym repo.klikam
 function loadServerConfigs() {
   const raw = process.env.SERVER_CONFIGS_JSON;
   if (!raw) {
