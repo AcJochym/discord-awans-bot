@@ -608,6 +608,19 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
     else if (name === 'zawieszenie') {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+
+      if (opts.kto) {
+        await sendToGoogleSheet({
+          kto_id: opts.kto,
+          zawieszenie: true 
+        });
+
+        const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
+        if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
+          await addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId)
+            .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
+        }
+      }
     }
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
@@ -650,19 +663,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     if (name === 'urlop' && sentMessage.id) {
       pendingUrlopMessages.add(sentMessage.id);
       usersWithPendingUrlop.add(interaction.member.user.id);
-    }
-
-    // FIX: dla zawieszenia - dodaj rolę "Zawieszony" do użytkownika
-    if (name === 'zawieszenie' && opts.kto) {
-      const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
-      if (opts.kto) {
-        await sendToGoogleSheet({
-          kto_id: opts.kto,
-          zawieszenie: true 
-        });
-      if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
-        await addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId).catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
-      }
     }
 
     // --- LOGOWANIE UŻYCIA KOMENDY ---
