@@ -279,6 +279,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
           (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
       });
 
+      const cleanDescriptionReject = originalEmbed.description.replace(/\n\n\*Wniosek złożono: <t:\d+:R>\*/g, "");
+      
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
@@ -336,6 +338,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
             (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
         });
 
+        const cleanDescriptionReject = originalEmbed.description.replace(/\n\n\*Wniosek złożono: <t:\d+:R>\*/g, "");
+        
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
           data: {
