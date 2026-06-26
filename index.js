@@ -608,6 +608,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
     else if (name === 'zawieszenie') {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+      await sendToGoogleSheet({
+        kto_id: opts.kto,
+        zawieszenie: true 
+      });
     }
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
