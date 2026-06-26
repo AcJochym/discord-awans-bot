@@ -1,0 +1,9 @@
+# Sekrety — NIGDY nie commituj prawdziwego .env
+.env
+.env.local
+.env.*.local
+
+# Standardowe dla Node.js
+node_modules/
+npm-debug.log*
+.DS_Store
