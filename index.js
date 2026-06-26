@@ -6,7 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
-// --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
+// --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) --- zmieniam tu coś szybko
 const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
 
 // --- TABELA KONFIGURACJI SERWERÓW ---
