@@ -7,9 +7,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
-const BOT_OWNER_ID = "419910833112350720"; 
+const BOT_OWNER_ID = "419910833112350720";
 
 // --- TABELA KONFIGURACJI SERWERÓW ---
+// (CONFIG NIEZMIENIONY — webhooki docelowo przenieś do zmiennych środowiskowych, patrz README)
 const serverConfigs = {
   //Field Training Division - TESTOWE
   "1476244145440948256": {
@@ -17,8 +18,8 @@ const serverConfigs = {
     PING_ROLE_ID: "ID",
     WEBHOOK_URL: "https://discord.com/api/webhooks/1519785641104113715/wCSUwsd3oJ9WfA3ZfxgtwGeTW6dXCkH82qhImTyt2SiEiwjrjmbDMD1BgGtOtGap8dBk", // <-- LOGI SERWERA 1
     CHANNELS: {
-      AWANS: "1476244147202428977", DEGRADACJA: "1476244147202428977", ZAWIESZENIE: "1476244147202428977", 
-      ZAGROZENIE: "1476244147202428977", SZKOLENIE: "1476244147202428977", URLOP: "1476244147202428977", 
+      AWANS: "1476244147202428977", DEGRADACJA: "1476244147202428977", ZAWIESZENIE: "1476244147202428977",
+      ZAGROZENIE: "1476244147202428977", SZKOLENIE: "1476244147202428977", URLOP: "1476244147202428977",
       ZWOLNIENIA: "1476244147202428977", NAGANA: "1476244147202428977", KARY: "1476244147202428977", ZEBRANIE: "ID"
     }
   },
@@ -28,8 +29,8 @@ const serverConfigs = {
     PING_ROLE_ID: "1344364929775304775",
     WEBHOOK_URL: "https://discord.com/api/webhooks/1519785437550350496/Psai7Bt6aFVAhbWitjAwjhpRZf7jvqmuB-F2X2ydBj4xrH6YzsqBwOD_pWFpdU2HO5UY", // <-- LOGI SERWERA 2
     CHANNELS: {
-      AWANS: "1344379382013362238", DEGRADACJA: "1344379443858247700", ZAWIESZENIE: "1344379535436546099", 
-      ZAGROZENIE: "1417946459378024519", SZKOLENIE: "1344386111975329925", URLOP: "1344379129193173094", 
+      AWANS: "1344379382013362238", DEGRADACJA: "1344379443858247700", ZAWIESZENIE: "1344379535436546099",
+      ZAGROZENIE: "1417946459378024519", SZKOLENIE: "1344386111975329925", URLOP: "1344379129193173094",
       ZWOLNIENIA: "1344379809278595114", NAGANA: "1519663613386952774", KARY: "1519663613386952774", ZEBRANIE: "1344374624636502126"
     }
   },
@@ -39,8 +40,8 @@ const serverConfigs = {
     PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
     WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
     CHANNELS: {
-      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
-      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU",
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU",
       ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
     }
   },
@@ -50,8 +51,8 @@ const serverConfigs = {
     PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
     WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
     CHANNELS: {
-      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
-      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU",
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU",
       ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
     }
   },
@@ -61,41 +62,54 @@ const serverConfigs = {
     PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
     WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
     CHANNELS: {
-      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU", 
-      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU", 
+      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU",
+      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU",
       ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
     }
   },
 };
 
+// --- ŚLEDZENIE WNIOSKÓW URLOPOWYCH W TOKU (anty race-condition + anty-spam) ---
+// Klucz: messageId wniosku -> true, dopóki nie zostanie rozpatrzony.
+// Klucz: userId -> true, jeśli ma już aktywny (nierozpatrzony) wniosek.
+const pendingUrlopMessages = new Set();
+const usersWithPendingUrlop = new Set();
+
 // Funkcja wysyłająca logi na Webhook
 async function sendWebhookLog(webhookUrl, embed) {
   if (!webhookUrl || webhookUrl === "TUTAJ_LINK_DO_WEBHOOKA") return;
   try {
-    await fetch(webhookUrl, {
+    const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ embeds: [embed] })
     });
+    if (!res.ok) {
+      console.error(`Webhook log error: HTTP ${res.status} ${await res.text()}`);
+    }
   } catch (e) {
     console.error("Błąd wysyłania logów na webhook:", e);
   }
 }
 
 async function sendToGoogleSheet(data) {
-  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzD-lrDugAFYwg6UPCmRRvvfvc2up1ZpaxcTX0LgW1latpIV1JOUt5L9bfiMfRO5YUh/exec"; 
+  const WEB_APP_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL || "https://script.google.com/macros/s/AKfycbzD-lrDugAFYwg6UPCmRRvvfvc2up1ZpaxcTX0LgW1latpIV1JOUt5L9bfiMfRO5YUh/exec";
   try {
-    await fetch(WEB_APP_URL, {
+    const res = await fetch(WEB_APP_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
+    if (!res.ok) {
+      console.error(`Google Sheet error: HTTP ${res.status}`);
+    }
   } catch (e) {
     console.error("Błąd wysyłania do Google Sheets:", e);
   }
 }
 
 // Funkcja pomocnicza do wysyłania wiadomości prywatnych (DM)
+// Zwraca true/false żeby wołający mógł zareagować (np. ostrzec admina, że DM nie doszedł bo user ma zablokowane DM)
 async function sendDM(userId, content) {
   try {
     const channelRes = await fetch(`https://discord.com/api/v10/users/@me/channels`, {
@@ -103,15 +117,144 @@ async function sendDM(userId, content) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
       body: JSON.stringify({ recipient_id: userId })
     });
+    if (!channelRes.ok) {
+      console.error(`Nie udało się otworzyć kanału DM: HTTP ${channelRes.status}`);
+      return false;
+    }
     const channel = await channelRes.json();
-    await fetch(`https://discord.com/api/v10/channels/${channel.id}/messages`, {
+    const msgRes = await fetch(`https://discord.com/api/v10/channels/${channel.id}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
       body: JSON.stringify({ content })
     });
+    if (!msgRes.ok) {
+      console.error(`Nie udało się wysłać treści DM: HTTP ${msgRes.status}`);
+      return false;
+    }
+    return true;
   } catch (e) {
     console.error("Nie udało się wysłać DM:", e);
+    return false;
   }
+}
+
+// Funkcja pomocnicza do wysyłania wiadomości na kanał serwera.
+// Zwraca true/false, żeby handler komendy wiedział czy faktycznie się powiodło
+// (zamiast zawsze zwracać "✅ wykonano" niezależnie od wyniku).
+async function sendChannelMessage(channelId, payload) {
+  try {
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      console.error(`Błąd wysyłania na kanał ${channelId}: HTTP ${res.status} ${await res.text()}`);
+      return false;
+    }
+    return await res.json();
+  } catch (e) {
+    console.error(`Błąd wysyłania na kanał ${channelId}:`, e);
+    return false;
+  }
+}
+
+// --- LOG O AKTUALIZACJI BOTA (najnowszy commit z GitHub, branch main) ---
+// Ustaw w zmiennych środowiskowych:
+//   GITHUB_REPO       -> w formacie "owner/repo" (wymagane, żeby ta funkcja coś zrobiła)
+//   GITHUB_BRANCH     -> opcjonalny, domyślnie "main"
+//   GITHUB_TOKEN      -> opcjonalny, podnosi limit zapytań do GitHub API (repo jest publiczne, więc nie jest wymagany)
+async function fetchLatestGithubCommit(repo, branch) {
+  try {
+    const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'discord-faction-bot' };
+    if (process.env.GITHUB_TOKEN) {
+      headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+    }
+    const res = await fetch(`https://api.github.com/repos/${repo}/commits/${branch}`, { headers });
+    if (!res.ok) {
+      console.error(`GitHub commits error: HTTP ${res.status} ${await res.text()}`);
+      return null;
+    }
+    const commit = await res.json();
+    const fullMessage = commit.commit?.message?.trim() || "(brak treści commita)";
+
+    // Konwencja GitHuba: pierwsza linia = tytuł, reszta po pustej linii = opis.
+    const [firstLine, ...rest] = fullMessage.split("\n");
+    const body = rest.join("\n").trim();
+
+    return {
+      title: firstLine.trim(),
+      body: body.length > 0 ? body : "_Brak dodatkowego opisu w commicie._",
+      sha: commit.sha,
+      shortSha: commit.sha ? commit.sha.slice(0, 7) : "?????",
+      url: commit.html_url,
+      author: commit.commit?.author?.name || commit.author?.login || "nieznany",
+      committedAt: commit.commit?.author?.date
+    };
+  } catch (e) {
+    console.error("Błąd pobierania najnowszego commita z GitHub:", e);
+    return null;
+  }
+}
+
+// Discord embed description ma limit 4096 znaków — opis commita może być długi (changelogi, listy zmian itd.),
+// więc obcinamy bezpiecznie i dodajemy info, że dalsza część jest tylko na GitHubie.
+function truncateForEmbed(text, maxLength = 3500) {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + "\n\n…*(opis przycięty, pełna treść na GitHubie)*";
+}
+
+// Wysyła log "bot zaktualizowany" na webhooki WSZYSTKICH skonfigurowanych serwerów.
+async function announceUpdateToAllServers() {
+  const repo = process.env.GITHUB_REPO;
+  if (!repo) {
+    console.log("ℹ️ GITHUB_REPO nie jest ustawione — pomijam log o aktualizacji.");
+    return;
+  }
+  const branch = process.env.GITHUB_BRANCH || "main";
+
+  const commit = await fetchLatestGithubCommit(repo, branch);
+  if (!commit) {
+    console.log("ℹ️ Nie udało się pobrać najnowszego commita z GitHub — pomijam log o aktualizacji.");
+    return;
+  }
+
+  const embed = {
+    title: `🚀 Bot zaktualizowany do nowego buildu: ${commit.title}`,
+    url: commit.url,
+    color: 5814783,
+    description: truncateForEmbed(commit.body),
+    footer: { text: `Commit: ${commit.shortSha} • Autor: ${commit.author} • Repo: ${repo} (${branch})` },
+    timestamp: new Date().toISOString()
+  };
+
+  const sentWebhooks = new Set(); // żeby nie wysłać 2x na ten sam webhook, jeśli kilka serwerów go współdzieli
+  for (const guildId of Object.keys(serverConfigs)) {
+    const webhookUrl = serverConfigs[guildId].WEBHOOK_URL;
+    if (!webhookUrl || webhookUrl === "TUTAJ_LINK_DO_WEBHOOKA" || sentWebhooks.has(webhookUrl)) continue;
+    sentWebhooks.add(webhookUrl);
+    await sendWebhookLog(webhookUrl, embed);
+  }
+
+  console.log(`✅ Log o aktualizacji (commit ${commit.shortSha}) wysłany na ${sentWebhooks.size} webhook(i).`);
+}
+
+// Walidacja daty w formacie DD.MM.RRRR — sprawdza format ORAZ że to realna data kalendarzowa.
+function parseStrictDate(value) {
+  const dateRegex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
+  const match = dateRegex.exec(value || "");
+  if (!match) return null;
+
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+
+  const date = new Date(year, month - 1, day);
+  // Jeśli np. wpisano 31.02.2026, JS "przeleje" datę na marzec — sprawdzamy że się zgadza.
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+  return date;
 }
 
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
@@ -120,7 +263,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
   // Pobranie konfiguracji dla serwera, na którym wywołano interakcję
   const guildConfig = serverConfigs[interaction.guild_id];
-  
+
   // Jeśli serwer nie jest skonfigurowany, przerywamy działanie
   if (!guildConfig) {
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ten serwer nie jest skonfigurowany.", flags: 64 } });
@@ -130,32 +273,56 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   if (interaction.type === 5) { // 5 = MODAL_SUBMIT
     const customId = interaction.data.custom_id;
     if (customId.startsWith('modal_reject_')) {
+      // FIX: ten handler wcześniej NIE sprawdzał uprawnień — każdy mógł wypełnić modal i odrzucić urlop.
+      const memberRoles = interaction.member.roles || [];
+      const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
+      if (!hasAdminRole) {
+        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Tylko administratorzy mogą rozpatrywać wnioski urlopowe.", flags: 64 } });
+      }
+
       const targetUserId = customId.replace('modal_reject_', '');
       const powod = interaction.data.components[0].components[0].value;
       const adminName = interaction.member.user.username;
-      const originalEmbed = interaction.message.embeds[0];
+      const messageId = interaction.message?.id;
+      const originalEmbed = interaction.message?.embeds?.[0];
 
-      await sendDM(targetUserId, `❌ Twój wniosek urlopowy został **ODRZUCONY** przez administratora **${adminName}**.\n**Powód:** ${powod}`);
-      
+      // FIX: jeśli wiadomość już rozpatrzona w międzyczasie (np. drugi admin kliknął chwilę wcześniej)
+      // albo embed zniknął z jakiegoś powodu, przerywamy zamiast wybuchać błędem / dublować akcję.
+      if (!originalEmbed || (messageId && !pendingUrlopMessages.has(messageId))) {
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: "⚠️ Ten wniosek został już rozpatrzony albo nie jest już dostępny.", flags: 64 }
+        });
+      }
+      if (messageId) pendingUrlopMessages.delete(messageId);
+      usersWithPendingUrlop.delete(targetUserId);
+
+      const dmOk = await sendDM(targetUserId, `❌ Twój wniosek urlopowy został **ODRZUCONY** przez administratora **${adminName}**.\n**Powód:** ${powod}`);
+
       // LOGOWANIE ODRZUCENIA
       await sendWebhookLog(guildConfig.WEBHOOK_URL, {
         title: "📝 Akcja: Odrzucenie Urlopu",
         color: 15158332,
-        description: `Administrator <@${interaction.member.user.id}> odrzucił wniosek urlopowy użytkownika <@${targetUserId}>.\n**Powód:** ${powod}`
+        description: `Administrator <@${interaction.member.user.id}> odrzucił wniosek urlopowy użytkownika <@${targetUserId}>.\n**Powód:** ${powod}` +
+          (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
       });
-      
+
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
-          embeds: [{ 
-            title: "URLOP ODRZUCONY", 
-            color: 15158332, 
-            description: originalEmbed.description + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` 
+          embeds: [{
+            title: "URLOP ODRZUCONY",
+            color: 15158332,
+            description: originalEmbed.description + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` +
+              (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*")
           }],
           components: []
         }
       });
     }
+    // FIX: jeśli trafi tu inny modal submit niewiadomego custom_id, zawsze odpowiadamy,
+    // żeby Discord nie zobaczył timeoutu / "interakcja nie powiodła się".
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieznany formularz.", flags: 64 } });
   }
 
   // --- 2. OBSŁUGA KLIKNIĘĆ W PRZYCISKI ---
@@ -170,29 +337,48 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
 
       const [, action, targetUserId] = customId.split('_');
-      const originalEmbed = interaction.message.embeds[0];
+      const messageId = interaction.message?.id;
+      const originalEmbed = interaction.message?.embeds?.[0];
+
+      // FIX: guard na brak embeda + na race condition (dwóch adminów klika niemal jednocześnie).
+      if (!originalEmbed || (messageId && !pendingUrlopMessages.has(messageId))) {
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: "⚠️ Ten wniosek został już rozpatrzony albo nie jest już dostępny.", flags: 64 }
+        });
+      }
+
       const adminName = interaction.member.user.username;
 
       if (action === 'accept') {
-        await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
-        
+        if (messageId) pendingUrlopMessages.delete(messageId);
+        usersWithPendingUrlop.delete(targetUserId);
+
+        const dmOk = await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
+
         // LOGOWANIE AKCEPTACJI
         await sendWebhookLog(guildConfig.WEBHOOK_URL, {
           title: "📝 Akcja: Akceptacja Urlopu",
           color: 5763719,
-          description: `Administrator <@${interaction.member.user.id}> zaakceptował wniosek urlopowy użytkownika <@${targetUserId}>.`
+          description: `Administrator <@${interaction.member.user.id}> zaakceptował wniosek urlopowy użytkownika <@${targetUserId}>.` +
+            (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
         });
 
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
           data: {
-            embeds: [{ title: "URLOP ZAAKCEPTOWANY", color: 5763719, description: originalEmbed.description + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>` }],
-            components: [] 
+            embeds: [{
+              title: "URLOP ZAAKCEPTOWANY",
+              color: 5763719,
+              description: originalEmbed.description + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>` +
+                (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*")
+            }],
+            components: []
           }
         });
       } else if (action === 'reject') {
         return res.json({
-          type: 9, 
+          type: 9,
           data: {
             title: "Odrzucenie urlopu",
             custom_id: `modal_reject_${targetUserId}`,
@@ -201,6 +387,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         });
       }
     }
+    // FIX: fallback, żeby nieobsłużone custom_id nie zostawiało Discorda bez odpowiedzi.
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieznana akcja.", flags: 64 } });
   }
 
   // --- 3. OBSŁUGA KOMEND ---
@@ -263,7 +451,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "1. Pracownik wpisuje `/urlop` na wyznaczonym w konfiguracji kanale urlopowym. Użycie jej w innym miejscu wywoła błąd.\n" +
                 "2. Jeśli format daty jest zły, bot anuluje proces i wysyła pracownikowi upomnienie w prywatnej wiadomości.\n" +
                 "3. Jeśli wszystko jest w porządku, pracownik dostaje na DM informację: *'Twój wniosek urlopowy został przesłany i oczekuje na akceptację.'*\n" +
-                "4. Na kanale generuje się estetyczny pomarańczowy dokument z przyciskami decyzyjnymi dla Zarządu."
+                "4. Na kanale generuje się estetyczny pomarańczowy dokument z przyciskami decyzyjnymi dla Zarządu.\n" +
+                "5. Jeśli masz już aktywny, nierozpatrzony wniosek, bot nie pozwoli złożyć kolejnego — najpierw musi zostać rozpatrzony obecny."
             }],
           }
         });
@@ -275,12 +464,36 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `❌ Komenda /urlop jest dostępna tylko na kanale <#${guildConfig.CHANNELS.URLOP}>.`, flags: 64 } });
     }
 
-    // Weryfikacja daty dla urlopu
+    // Walidacja daty i logiki dla urlopu
+    let startDateObj, endDateObj, dni;
     if (name === 'urlop') {
-      const dateRegex = /^\d{2}\.\d{2}\.\d{4}$/;
-      if (!dateRegex.test(opts.rozpoczecie) || !dateRegex.test(opts.zakonczenie)) {
-        await sendDM(interaction.member.user.id, "❌ Błędny format daty! Użyj formatu DD.MM.RRRR (np. 25.06.2026).");
+      startDateObj = parseStrictDate(opts.rozpoczecie);
+      endDateObj = parseStrictDate(opts.zakonczenie);
+
+      if (!startDateObj || !endDateObj) {
+        await sendDM(interaction.member.user.id, "❌ Błędny format daty! Użyj formatu DD.MM.RRRR (np. 25.06.2026) i sprawdź, czy data istnieje w kalendarzu.");
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędny format daty! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
+      }
+
+      // FIX: walidacja logiki dat — zakończenie nie może być przed rozpoczęciem.
+      if (endDateObj < startDateObj) {
+        await sendDM(interaction.member.user.id, "❌ Data zakończenia urlopu nie może być wcześniejsza niż data rozpoczęcia.");
+        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędny zakres dat! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
+      }
+
+      // FIX: walidacja że "czas" to liczba całkowita dodatnia, nie NaN/0/ujemna/tekst.
+      dni = parseInt(opts.czas, 10);
+      if (!Number.isInteger(dni) || dni <= 0 || String(opts.czas).trim() !== String(dni)) {
+        await sendDM(interaction.member.user.id, "❌ Pole \"czas\" musi być liczbą całkowitą większą od 0 (np. 7).");
+        return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędna wartość pola \"czas\"! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
+      }
+
+      // FIX: anty-spam — blokujemy złożenie drugiego wniosku, jeśli poprzedni nie został rozpatrzony.
+      if (usersWithPendingUrlop.has(interaction.member.user.id)) {
+        return res.json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: "❌ Masz już aktywny, nierozpatrzony wniosek urlopowy. Poczekaj na decyzję administracji przed złożeniem kolejnego.", flags: 64 }
+        });
       }
     }
 
@@ -310,14 +523,18 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
 
+    // FIX: jeśli kanał docelowy w configu to wciąż placeholder ("ID", "ID_KANALU"), informujemy zamiast wysyłać w pustkę.
+    if (!cfg.channel || cfg.channel === "ID" || cfg.channel === "ID_KANALU") {
+      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Kanał docelowy dla tej komendy nie jest skonfigurowany na tym serwerze. Skontaktuj się z właścicielem bota.", flags: 64 } });
+    }
+
     const now = new Date();
     const data = `${now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" })} ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}`;
-    
+
     let description = "", content = opts.kto ? `<@${opts.kto}>` : "", components = [];
     let finalColor = cfg.color;
 
     if (name === 'urlop') {
-      const dni = parseInt(opts.czas);
       const dniLabel = dni === 1 ? "dzień" : "dni";
 
       await sendToGoogleSheet({
@@ -341,8 +558,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       if (isZdane) {
         await sendToGoogleSheet({
-          kto_id: opts.kto_zdawal, 
-          szkolenie: opts.szkolenie 
+          kto_id: opts.kto_zdawal,
+          szkolenie: opts.szkolenie
         });
       }
     }
@@ -353,14 +570,14 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
       cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
       description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
-    } 
+    }
     else if (name === 'odwolaj_zagrozenie') {
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
     else if (name === 'zawieszenie') {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-    } 
+    }
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
       description = `Kto: ${opts.imie_nazwisko}\nPowód: **${opts.powod}**\nNadane przez: <@${interaction.member.user.id}>\n\n${data}`;
@@ -375,9 +592,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
     else if (name === 'zebranie') {
       const roleId = guildConfig.PING_ROLE_ID;
-      content = roleId ? `<@&${roleId}>` : "@everyone"; 
-      
-      description = `**ZEBRANIE DEPARTAMENTU** <@&${roleId}>\n` +
+      // FIX: jeśli PING_ROLE_ID jest placeholderem ("ID"), nie wysyłamy złamanego mentiona / przypadkowego @everyone.
+      const pingMention = (roleId && roleId !== "ID") ? `<@&${roleId}>` : "";
+      content = pingMention || "";
+
+      description = `**ZEBRANIE DEPARTAMENTU** ${pingMention}\n` +
                     `**Data:** ${opts.data}\n` +
                     `**Godzina:** ${opts.godzina}\n` +
                     `**Miejsce Zebrania:** ${opts.miejsce}\n\n` +
@@ -388,11 +607,19 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
 
     // Wysłanie wiadomości na odpowiedni kanał
-    await fetch(`https://discord.com/api/v10/channels/${cfg.channel}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
-      body: JSON.stringify({ content, embeds: [{ title: cfg.title, color: finalColor, description }], components })
-    });
+    const sentMessage = await sendChannelMessage(cfg.channel, { content, embeds: [{ title: cfg.title, color: finalColor, description }], components });
+
+    // FIX: jeśli wysyłka się nie powiodła (np. zły ID kanału, brak uprawnień bota), informujemy o tym
+    // zamiast bezwarunkowo zwracać "✅ Komenda wykonana!".
+    if (!sentMessage) {
+      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `⚠️ Komenda ${name} przetworzona, ale wystąpił błąd przy wysyłaniu wiadomości na kanał docelowy. Sprawdź uprawnienia bota i konfigurację kanału.`, flags: 64 } });
+    }
+
+    // FIX: dopiero gdy wiadomość urlopu faktycznie wyszła, rejestrujemy jej ID jako "oczekujący" wniosek.
+    if (name === 'urlop' && sentMessage.id) {
+      pendingUrlopMessages.add(sentMessage.id);
+      usersWithPendingUrlop.add(interaction.member.user.id);
+    }
 
     // --- LOGOWANIE UŻYCIA KOMENDY ---
     // Formatowanie opcji komendy do ładnego tekstu
@@ -414,6 +641,14 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
   }
+
+  // FIX: fallback dla typów interakcji, które nie trafiły w żaden z powyższych blocków
+  // (np. AUTOCOMPLETE albo nieznany typ w przyszłości) — bez tego Express zawiesi request.
+  return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieobsługiwany typ interakcji.", flags: 64 } });
 });
 
-app.listen(PORT, () => console.log(`🤖 Bot działa na porcie ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🤖 Bot działa na porcie ${PORT}`);
+  // Log "bot zaktualizowany" wysyłany przy każdym starcie/restarcie procesu (np. po deployu na Railway).
+  announceUpdateToAllServers();
+});
