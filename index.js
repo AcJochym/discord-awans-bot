@@ -7,67 +7,35 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
-const BOT_OWNER_ID = "419910833112350720";
+const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
 
 // --- TABELA KONFIGURACJI SERWERÓW ---
-// (CONFIG NIEZMIENIONY — webhooki docelowo przenieś do zmiennych środowiskowych, patrz README)
-const serverConfigs = {
-  //Field Training Division - TESTOWE
-  "1476244145440948256": {
-    REQUIRED_ROLE_IDS: ["1476244145923297429", "TUTAJ_MOZESZ_DODAC_DRUGA_ROLE_TESTOWA"],
-    PING_ROLE_ID: "ID",
-    WEBHOOK_URL: "https://discord.com/api/webhooks/1519785641104113715/wCSUwsd3oJ9WfA3ZfxgtwGeTW6dXCkH82qhImTyt2SiEiwjrjmbDMD1BgGtOtGap8dBk", // <-- LOGI SERWERA 1
-    CHANNELS: {
-      AWANS: "1476244147202428977", DEGRADACJA: "1476244147202428977", ZAWIESZENIE: "1476244147202428977",
-      ZAGROZENIE: "1476244147202428977", SZKOLENIE: "1476244147202428977", URLOP: "1476244147202428977",
-      ZWOLNIENIA: "1476244147202428977", NAGANA: "1476244147202428977", KARY: "1476244147202428977", ZEBRANIE: "ID"
-    }
-  },
-  //LSPD
-  "1344364720605499442": {
-    REQUIRED_ROLE_IDS: ["1505571491180314956", "1344373183079256064", "1344664019751014543", "1519781307792756736"],
-    PING_ROLE_ID: "1344364929775304775",
-    WEBHOOK_URL: "https://discord.com/api/webhooks/1519785437550350496/Psai7Bt6aFVAhbWitjAwjhpRZf7jvqmuB-F2X2ydBj4xrH6YzsqBwOD_pWFpdU2HO5UY", // <-- LOGI SERWERA 2
-    CHANNELS: {
-      AWANS: "1344379382013362238", DEGRADACJA: "1344379443858247700", ZAWIESZENIE: "1344379535436546099",
-      ZAGROZENIE: "1417946459378024519", SZKOLENIE: "1344386111975329925", URLOP: "1344379129193173094",
-      ZWOLNIENIA: "1344379809278595114", NAGANA: "1519663613386952774", KARY: "1519663613386952774", ZEBRANIE: "1344374624636502126"
-    }
-  },
-  //BCSO
-  "ID_TWOJEGO_SERWERA_3": {
-    REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
-    PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
-    WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
-    CHANNELS: {
-      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU",
-      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU",
-      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
-    }
-  },
-  //LSSD
-  "ID_TWOJEGO_SERWERA_4": {
-    REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
-    PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
-    WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
-    CHANNELS: {
-      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU",
-      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU",
-      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
-    }
-  },
-  //DOC
-  "ID_TWOJEGO_SERWERA_5": {
-    REQUIRED_ROLE_IDS: ["ID_ROLI_ADMINA_1", "ID_ROLI_ADMINA_2"],
-    PING_ROLE_ID: "ID_ROLI_LSPD_DO_PINGOWANIA",
-    WEBHOOK_URL: "TUTAJ_LINK_DO_WEBHOOKA",
-    CHANNELS: {
-      AWANS: "ID_KANALU", DEGRADACJA: "ID_KANALU", ZAWIESZENIE: "ID_KANALU",
-      ZAGROZENIE: "ID_KANALU", SZKOLENIE: "ID_KANALU", URLOP: "ID_KANALU",
-      ZWOLNIENIA: "ID_KANALU", NAGANA: "ID_KANALU", KARY: "ID_KANALU", ZEBRANIE: "ID"
-    }
-  },
-};
+// Cała konfiguracja (webhooki, role, kanały) jest teraz w zmiennej środowiskowej SERVER_CONFIGS_JSON
+// jako jeden zminifikowany JSON — patrz .env.example dla pełnego szablonu i README dla instrukcji.
+// Nic z tego nie jest już zapisane w kodzie, więc plik jest bezpieczny do trzymania w publicznym repo.
+function loadServerConfigs() {
+  const raw = process.env.SERVER_CONFIGS_JSON;
+  if (!raw) {
+    console.error("❌ BRAK zmiennej środowiskowej SERVER_CONFIGS_JSON — bot nie ma żadnej konfiguracji serwerów!");
+    return {};
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("❌ SERVER_CONFIGS_JSON zawiera niepoprawny JSON — sprawdź składnię (cytowanie, przecinki):", e.message);
+    return {};
+  }
+}
+
+const serverConfigs = loadServerConfigs();
+
+// Walidacja podstawowych sekretów na starcie — szybki, czytelny błąd w logach lepszy niż ciche, dziwne crashe później.
+const REQUIRED_ENV_VARS = ['DISCORD_PUBLIC_KEY', 'DISCORD_BOT_TOKEN', 'BOT_OWNER_ID', 'SERVER_CONFIGS_JSON'];
+for (const key of REQUIRED_ENV_VARS) {
+  if (!process.env[key]) {
+    console.error(`❌ BRAK wymaganej zmiennej środowiskowej: ${key}. Bot może nie działać poprawnie.`);
+  }
+}
 
 // --- ŚLEDZENIE WNIOSKÓW URLOPOWYCH W TOKU (anty race-condition + anty-spam) ---
 // Klucz: messageId wniosku -> true, dopóki nie zostanie rozpatrzony.
@@ -93,7 +61,11 @@ async function sendWebhookLog(webhookUrl, embed) {
 }
 
 async function sendToGoogleSheet(data) {
-  const WEB_APP_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL || "https://script.google.com/macros/s/AKfycbzD-lrDugAFYwg6UPCmRRvvfvc2up1ZpaxcTX0LgW1latpIV1JOUt5L9bfiMfRO5YUh/exec";
+  const WEB_APP_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL;
+  if (!WEB_APP_URL) {
+    console.error("❌ BRAK zmiennej środowiskowej GOOGLE_SHEET_WEBHOOK_URL — pomijam zapis do Google Sheets.");
+    return;
+  }
   try {
     const res = await fetch(WEB_APP_URL, {
       method: 'POST',
