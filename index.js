@@ -37,11 +37,63 @@ for (const key of REQUIRED_ENV_VARS) {
   }
 }
 
+// Informacyjna walidacja per-serwer: każdy serwer MOŻE mieć własny GOOGLE_SHEET_WEBHOOK_URL w SERVER_CONFIGS_JSON.
+// To nie jest błąd krytyczny (bot dalej działa, po prostu nie zapisze /urlop i /szkolenie do arkusza tego serwera),
+// ale warto wiedzieć o tym z logów startowych, a nie dopiero gdy ktoś użyje komendy.
+for (const [guildId, cfg] of Object.entries(serverConfigs)) {
+  if (!cfg.GOOGLE_SHEET_WEBHOOK_URL) {
+    console.warn(`⚠️ Serwer ${guildId} nie ma ustawionego GOOGLE_SHEET_WEBHOOK_URL — wpisy /urlop i /szkolenie nie będą zapisywane do arkusza dla tego serwera.`);
+  }
+}
+
 // --- ŚLEDZENIE WNIOSKÓW URLOPOWYCH W TOKU (anty race-condition + anty-spam) ---
 // Klucz: messageId wniosku -> true, dopóki nie zostanie rozpatrzony.
 // Klucz: userId -> true, jeśli ma już aktywny (nierozpatrzony) wniosek.
 const pendingUrlopMessages = new Set();
 const usersWithPendingUrlop = new Set();
+
+// Funkcja do dodawania roli użytkownikowi na Discordzie
+async function addRoleToMember(guildId, userId, roleId) {
+  if (!roleId || roleId === "ID") {
+    console.warn(`⚠️ Rola nie jest skonfigurowana dla serwera ${guildId} — pomijam dodanie roli.`);
+    return false;
+  }
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+    });
+    if (!res.ok) {
+      console.error(`Błąd dodawania roli ${roleId} do użytkownika ${userId}: HTTP ${res.status}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`Błąd dodawania roli:`, e);
+    return false;
+  }
+}
+
+// Funkcja do usuwania roli użytkownikowi na Discordzie
+async function removeRoleFromMember(guildId, userId, roleId) {
+  if (!roleId || roleId === "ID") {
+    return false;
+  }
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+    });
+    if (!res.ok) {
+      console.error(`Błąd usuwania roli ${roleId} od użytkownika ${userId}: HTTP ${res.status}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`Błąd usuwania roli:`, e);
+    return false;
+  }
+}
 
 // Funkcja wysyłająca logi na Webhook
 async function sendWebhookLog(webhookUrl, embed) {
@@ -60,14 +112,15 @@ async function sendWebhookLog(webhookUrl, embed) {
   }
 }
 
-async function sendToGoogleSheet(data) {
-  const WEB_APP_URL = process.env.GOOGLE_SHEET_WEBHOOK_URL;
-  if (!WEB_APP_URL) {
-    console.error("❌ BRAK zmiennej środowiskowej GOOGLE_SHEET_WEBHOOK_URL — pomijam zapis do Google Sheets.");
+// FIX: URL jest teraz przekazywany jako argument (z config danego serwera: guildConfig.GOOGLE_SHEET_WEBHOOK_URL),
+// a nie czytany z jednej globalnej zmiennej środowiskowej — każdy serwer może mieć swój własny arkusz Google Sheets.
+async function sendToGoogleSheet(webAppUrl, data) {
+  if (!webAppUrl) {
+    console.error("❌ Brak skonfigurowanego GOOGLE_SHEET_WEBHOOK_URL dla tego serwera — pomijam zapis do Google Sheets.");
     return;
   }
   try {
-    const res = await fetch(WEB_APP_URL, {
+    const res = await fetch(webAppUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -279,15 +332,13 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
           (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
       });
 
-      const cleanDescriptionReject = originalEmbed.description.replace(/\n\n\*Wniosek złożono: <t:\d+:R>\*/g, "");
-      
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
           embeds: [{
             title: "URLOP ODRZUCONY",
             color: 15158332,
-            description: cleanDescriptionReject + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` +
+            description: originalEmbed.description + `\n\n**Odrzucone przez:** <@${interaction.member.user.id}>\n**Powód odrzucenia:** ${powod}` +
               (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*")
           }],
           components: []
@@ -328,6 +379,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         if (messageId) pendingUrlopMessages.delete(messageId);
         usersWithPendingUrlop.delete(targetUserId);
 
+        // FIX: dodaj rolę "Na urlopie" do użytkownika
+        const urlopRoleId = guildConfig.ROLES?.URLOP_ROLE_ID;
+        const roleAdded = urlopRoleId ? await addRoleToMember(interaction.guild_id, targetUserId, urlopRoleId) : false;
+
         const dmOk = await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
 
         // LOGOWANIE AKCEPTACJI
@@ -335,19 +390,19 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
           title: "📝 Akcja: Akceptacja Urlopu",
           color: 5763719,
           description: `Administrator <@${interaction.member.user.id}> zaakceptował wniosek urlopowy użytkownika <@${targetUserId}>.` +
-            (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
+            (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*") +
+            (roleAdded ? "" : "\n⚠️ *Nie udało się dodać roli \"Na urlopie\" (rola może być niezakonfigurowana).*")
         });
 
-        const cleanDescriptionAccept = originalEmbed.description.replace(/\n\n\*Wniosek złożono: <t:\d+:R>\*/g, "");
-        
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
           data: {
             embeds: [{
               title: "URLOP ZAAKCEPTOWANY",
               color: 5763719,
-              description: cleanDescriptionAccept + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>` +
-                (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*")
+              description: originalEmbed.description + `\n\n**Zaakceptowane przez:** <@${interaction.member.user.id}>` +
+                (dmOk ? "" : "\n⚠️ *Nie udało się powiadomić użytkownika na DM.*") +
+                (roleAdded ? "" : "\n⚠️ *Rola nie została dodana - sprawdź konfigurację.*")
             }],
             components: []
           }
@@ -513,14 +568,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     if (name === 'urlop') {
       const dniLabel = dni === 1 ? "dzień" : "dni";
 
-      await sendToGoogleSheet({
+      await sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
         kto_id: interaction.member.user.id,
         zakonczenie: opts.zakonczenie
       });
 
-      const unixTimestamp = Math.floor(Date.now() / 1000);
-      
-      description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}\n\n*Wniosek złożono: <t:${unixTimestamp}:R>*`;
+      description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
       components = [{ type: 1, components: [
         { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
         { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
@@ -535,7 +588,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
 
       if (isZdane) {
-        await sendToGoogleSheet({
+        await sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
           kto_id: opts.kto_zdawal,
           szkolenie: opts.szkolenie
         });
@@ -597,6 +650,14 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     if (name === 'urlop' && sentMessage.id) {
       pendingUrlopMessages.add(sentMessage.id);
       usersWithPendingUrlop.add(interaction.member.user.id);
+    }
+
+    // FIX: dla zawieszenia - dodaj rolę "Zawieszony" do użytkownika
+    if (name === 'zawieszenie' && opts.kto) {
+      const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
+      if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
+        await addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId).catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
+      }
     }
 
     // --- LOGOWANIE UŻYCIA KOMENDY ---
