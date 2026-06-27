@@ -6,13 +6,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
-// --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) --- zmieniam tu coś szybko
+// --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
 const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
 
 // --- TABELA KONFIGURACJI SERWERÓW ---
-// Cała konfiguracja (webhooki, role, kanały) jest teraz w zmiennej środowiskowej SERVER_CONFIGS_JSON
-// jako jeden zminifikowany JSON — patrz .env.example dla pełnego szablonu i README dla instrukcji.
-// Nic z tego nie jest już zapisane w kodzie, więc plik jest bezpieczny do trzymania w publicznym repo.klikam dodaje gównp
 function loadServerConfigs() {
   const raw = process.env.SERVER_CONFIGS_JSON;
   if (!raw) {
@@ -29,7 +26,7 @@ function loadServerConfigs() {
 
 const serverConfigs = loadServerConfigs();
 
-// Walidacja podstawowych sekretów na starcie — szybki, czytelny błąd w logach lepszy niż ciche, dziwne crashe później.
+// Walidacja podstawowych sekretów na starcie
 const REQUIRED_ENV_VARS = ['DISCORD_PUBLIC_KEY', 'DISCORD_BOT_TOKEN', 'BOT_OWNER_ID', 'SERVER_CONFIGS_JSON'];
 for (const key of REQUIRED_ENV_VARS) {
   if (!process.env[key]) {
@@ -37,9 +34,7 @@ for (const key of REQUIRED_ENV_VARS) {
   }
 }
 
-// Informacyjna walidacja per-serwer: każdy serwer MOŻE mieć własny GOOGLE_SHEET_WEBHOOK_URL w SERVER_CONFIGS_JSON.
-// To nie jest błąd krytyczny (bot dalej działa, po prostu nie zapisze /urlop i /szkolenie do arkusza tego serwera),
-// ale warto wiedzieć o tym z logów startowych, a nie dopiero gdy ktoś użyje komendy.
+// Informacyjna walidacja per-serwer
 for (const [guildId, cfg] of Object.entries(serverConfigs)) {
   if (!cfg.GOOGLE_SHEET_WEBHOOK_URL) {
     console.warn(`⚠️ Serwer ${guildId} nie ma ustawionego GOOGLE_SHEET_WEBHOOK_URL — wpisy /urlop i /szkolenie nie będą zapisywane do arkusza dla tego serwera.`);
@@ -47,8 +42,6 @@ for (const [guildId, cfg] of Object.entries(serverConfigs)) {
 }
 
 // --- ŚLEDZENIE WNIOSKÓW URLOPOWYCH W TOKU (anty race-condition + anty-spam) ---
-// Klucz: messageId wniosku -> true, dopóki nie zostanie rozpatrzony.
-// Klucz: userId -> true, jeśli ma już aktywny (nierozpatrzony) wniosek.
 const pendingUrlopMessages = new Set();
 const usersWithPendingUrlop = new Set();
 
@@ -112,8 +105,7 @@ async function sendWebhookLog(webhookUrl, embed) {
   }
 }
 
-// FIX: URL jest teraz przekazywany jako argument (z config danego serwera: guildConfig.GOOGLE_SHEET_WEBHOOK_URL),
-// a nie czytany z jednej globalnej zmiennej środowiskowej — każdy serwer może mieć swój własny arkusz Google Sheets.
+// Wysyła dane do Google Sheets
 async function sendToGoogleSheet(webAppUrl, data) {
   if (!webAppUrl) {
     console.error("❌ Brak skonfigurowanego GOOGLE_SHEET_WEBHOOK_URL dla tego serwera — pomijam zapis do Google Sheets.");
@@ -134,7 +126,6 @@ async function sendToGoogleSheet(webAppUrl, data) {
 }
 
 // Funkcja pomocnicza do wysyłania wiadomości prywatnych (DM)
-// Zwraca true/false żeby wołający mógł zareagować (np. ostrzec admina, że DM nie doszedł bo user ma zablokowane DM)
 async function sendDM(userId, content) {
   try {
     const channelRes = await fetch(`https://discord.com/api/v10/users/@me/channels`, {
@@ -163,9 +154,7 @@ async function sendDM(userId, content) {
   }
 }
 
-// Funkcja pomocnicza do wysyłania wiadomości na kanał serwera.
-// Zwraca true/false, żeby handler komendy wiedział czy faktycznie się powiodło
-// (zamiast zawsze zwracać "✅ wykonano" niezależnie od wyniku).
+// Funkcja pomocnicza do wysyłania wiadomości na kanał serwera
 async function sendChannelMessage(channelId, payload) {
   try {
     const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
@@ -184,11 +173,7 @@ async function sendChannelMessage(channelId, payload) {
   }
 }
 
-// --- LOG O AKTUALIZACJI BOTA (najnowszy commit z GitHub, branch main) ---
-// Ustaw w zmiennych środowiskowych:
-//   GITHUB_REPO       -> w formacie "owner/repo" (wymagane, żeby ta funkcja coś zrobiła)
-//   GITHUB_BRANCH     -> opcjonalny, domyślnie "main"
-//   GITHUB_TOKEN      -> opcjonalny, podnosi limit zapytań do GitHub API (repo jest publiczne, więc nie jest wymagany)
+// --- LOG O AKTUALIZACJI BOTA (najnowszy commit z GitHub) ---
 async function fetchLatestGithubCommit(repo, branch) {
   try {
     const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'discord-faction-bot' };
@@ -203,7 +188,6 @@ async function fetchLatestGithubCommit(repo, branch) {
     const commit = await res.json();
     const fullMessage = commit.commit?.message?.trim() || "(brak treści commita)";
 
-    // Konwencja GitHuba: pierwsza linia = tytuł, reszta po pustej linii = opis.
     const [firstLine, ...rest] = fullMessage.split("\n");
     const body = rest.join("\n").trim();
 
@@ -222,14 +206,13 @@ async function fetchLatestGithubCommit(repo, branch) {
   }
 }
 
-// Discord embed description ma limit 4096 znaków — opis commita może być długi (changelogi, listy zmian itd.),
-// więc obcinamy bezpiecznie i dodajemy info, że dalsza część jest tylko na GitHubie.
+// Obcinanie tekstu do limitu Discord embeda
 function truncateForEmbed(text, maxLength = 3500) {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + "\n\n…*(opis przycięty, pełna treść na GitHubie)*";
 }
 
-// Wysyła log "bot zaktualizowany" na webhooki WSZYSTKICH skonfigurowanych serwerów.
+// Wysyła log "bot zaktualizowany" na wszystkie serwery
 async function announceUpdateToAllServers() {
   const repo = process.env.GITHUB_REPO;
   if (!repo) {
@@ -253,7 +236,7 @@ async function announceUpdateToAllServers() {
     timestamp: new Date().toISOString()
   };
 
-  const sentWebhooks = new Set(); // żeby nie wysłać 2x na ten sam webhook, jeśli kilka serwerów go współdzieli
+  const sentWebhooks = new Set();
   for (const guildId of Object.keys(serverConfigs)) {
     const webhookUrl = serverConfigs[guildId].WEBHOOK_URL;
     if (!webhookUrl || webhookUrl === "TUTAJ_LINK_DO_WEBHOOKA" || sentWebhooks.has(webhookUrl)) continue;
@@ -264,7 +247,7 @@ async function announceUpdateToAllServers() {
   console.log(`✅ Log o aktualizacji (commit ${commit.shortSha}) wysłany na ${sentWebhooks.size} webhook(i).`);
 }
 
-// Walidacja daty w formacie DD.MM.RRRR — sprawdza format ORAZ że to realna data kalendarzowa.
+// Walidacja daty w formacie DD.MM.RRRR
 function parseStrictDate(value) {
   const dateRegex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
   const match = dateRegex.exec(value || "");
@@ -275,7 +258,6 @@ function parseStrictDate(value) {
   const year = parseInt(match[3], 10);
 
   const date = new Date(year, month - 1, day);
-  // Jeśli np. wpisano 31.02.2026, JS "przeleje" datę na marzec — sprawdzamy że się zgadza.
   if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
     return null;
   }
@@ -286,19 +268,16 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   const interaction = req.body;
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
-  // Pobranie konfiguracji dla serwera, na którym wywołano interakcję
   const guildConfig = serverConfigs[interaction.guild_id];
 
-  // Jeśli serwer nie jest skonfigurowany, przerywamy działanie
   if (!guildConfig) {
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ten serwer nie jest skonfigurowany.", flags: 64 } });
   }
 
   // --- 1. OBSŁUGA MODALA (POWÓD ODRZUCENIA) ---
-  if (interaction.type === 5) { // 5 = MODAL_SUBMIT
+  if (interaction.type === 5) {
     const customId = interaction.data.custom_id;
     if (customId.startsWith('modal_reject_')) {
-      // FIX: ten handler wcześniej NIE sprawdzał uprawnień — każdy mógł wypełnić modal i odrzucić urlop.
       const memberRoles = interaction.member.roles || [];
       const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
       if (!hasAdminRole) {
@@ -311,8 +290,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const messageId = interaction.message?.id;
       const originalEmbed = interaction.message?.embeds?.[0];
 
-      // FIX: jeśli wiadomość już rozpatrzona w międzyczasie (np. drugi admin kliknął chwilę wcześniej)
-      // albo embed zniknął z jakiegoś powodu, przerywamy zamiast wybuchać błędem / dublować akcję.
       if (!originalEmbed || (messageId && !pendingUrlopMessages.has(messageId))) {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -324,13 +301,13 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       const dmOk = await sendDM(targetUserId, `❌ Twój wniosek urlopowy został **ODRZUCONY** przez administratora **${adminName}**.\n**Powód:** ${powod}`);
 
-      // LOGOWANIE ODRZUCENIA
-      await sendWebhookLog(guildConfig.WEBHOOK_URL, {
+      // Logowanie w tle (bez await)
+      sendWebhookLog(guildConfig.WEBHOOK_URL, {
         title: "📝 Akcja: Odrzucenie Urlopu",
         color: 15158332,
         description: `Administrator <@${interaction.member.user.id}> odrzucił wniosek urlopowy użytkownika <@${targetUserId}>.\n**Powód:** ${powod}` +
           (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*")
-      });
+      }).catch(e => console.error('Błąd logowania odrzucenia:', e));
 
       return res.json({
         type: InteractionResponseType.UPDATE_MESSAGE,
@@ -345,8 +322,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         }
       });
     }
-    // FIX: jeśli trafi tu inny modal submit niewiadomego custom_id, zawsze odpowiadamy,
-    // żeby Discord nie zobaczył timeoutu / "interakcja nie powiodła się".
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieznany formularz.", flags: 64 } });
   }
 
@@ -365,7 +340,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       const messageId = interaction.message?.id;
       const originalEmbed = interaction.message?.embeds?.[0];
 
-      // FIX: guard na brak embeda + na race condition (dwóch adminów klika niemal jednocześnie).
       if (!originalEmbed || (messageId && !pendingUrlopMessages.has(messageId))) {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -379,20 +353,19 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         if (messageId) pendingUrlopMessages.delete(messageId);
         usersWithPendingUrlop.delete(targetUserId);
 
-        // FIX: dodaj rolę "Na urlopie" do użytkownika
+        // Operacje w tle (bez await)
         const urlopRoleId = guildConfig.ROLES?.URLOP_ROLE_ID;
         const roleAdded = urlopRoleId ? await addRoleToMember(interaction.guild_id, targetUserId, urlopRoleId) : false;
 
         const dmOk = await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
 
-        // LOGOWANIE AKCEPTACJI
-        await sendWebhookLog(guildConfig.WEBHOOK_URL, {
+        sendWebhookLog(guildConfig.WEBHOOK_URL, {
           title: "📝 Akcja: Akceptacja Urlopu",
           color: 5763719,
           description: `Administrator <@${interaction.member.user.id}> zaakceptował wniosek urlopowy użytkownika <@${targetUserId}>.` +
             (dmOk ? "" : "\n⚠️ *Nie udało się wysłać DM do użytkownika (może mieć zablokowane wiadomości prywatne).*") +
             (roleAdded ? "" : "\n⚠️ *Nie udało się dodać roli \"Na urlopie\" (rola może być niezakonfigurowana).*")
-        });
+        }).catch(e => console.error('Błąd logowania akceptacji:', e));
 
         return res.json({
           type: InteractionResponseType.UPDATE_MESSAGE,
@@ -418,7 +391,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         });
       }
     }
-    // FIX: fallback, żeby nieobsłużone custom_id nie zostawiało Discorda bez odpowiedzi.
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieznana akcja.", flags: 64 } });
   }
 
@@ -506,20 +478,17 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędny format daty! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
       }
 
-      // FIX: walidacja logiki dat — zakończenie nie może być przed rozpoczęciem.
       if (endDateObj < startDateObj) {
         await sendDM(interaction.member.user.id, "❌ Data zakończenia urlopu nie może być wcześniejsza niż data rozpoczęcia.");
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędny zakres dat! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
       }
 
-      // FIX: walidacja że "czas" to liczba całkowita dodatnia, nie NaN/0/ujemna/tekst.
       dni = parseInt(opts.czas, 10);
       if (!Number.isInteger(dni) || dni <= 0 || String(opts.czas).trim() !== String(dni)) {
         await sendDM(interaction.member.user.id, "❌ Pole \"czas\" musi być liczbą całkowitą większą od 0 (np. 7).");
         return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Błędna wartość pola \"czas\"! Sprawdź wiadomość prywatną od bota.", flags: 64 } });
       }
 
-      // FIX: anty-spam — blokujemy złożenie drugiego wniosku, jeśli poprzedni nie został rozpatrzony.
       if (usersWithPendingUrlop.has(interaction.member.user.id)) {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -554,7 +523,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const cfg = configs[name];
     if (!cfg) return res.status(400).json({ error: 'Unknown command' });
 
-    // FIX: jeśli kanał docelowy w configu to wciąż placeholder ("ID", "ID_KANALU"), informujemy zamiast wysyłać w pustkę.
     if (!cfg.channel || cfg.channel === "ID" || cfg.channel === "ID_KANALU") {
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Kanał docelowy dla tej komendy nie jest skonfigurowany na tym serwerze. Skontaktuj się z właścicielem bota.", flags: 64 } });
     }
@@ -565,20 +533,23 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     let description = "", content = opts.kto ? `<@${opts.kto}>` : "", components = [];
     let finalColor = cfg.color;
 
+    // --- PRZYGOTOWANIE TREŚCI KOMEND ---
     if (name === 'urlop') {
       const dniLabel = dni === 1 ? "dzień" : "dni";
-
-      await sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-        kto_id: interaction.member.user.id,
-        zakonczenie: opts.zakonczenie
-      });
-
       description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
       components = [{ type: 1, components: [
         { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
         { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
       ]}];
-      await sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.");
+      
+      // Wyślij DM i zapisz do Google Sheets w tle (bez await)
+      sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.")
+        .catch(e => console.error('Błąd wysyłania DM urlopu:', e));
+      
+      sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
+        kto_id: interaction.member.user.id,
+        zakonczenie: opts.zakonczenie
+      }).catch(e => console.error('Błąd wysyłania urlopu do Google Sheets:', e));
     }
     else if (name === 'szkolenie') {
       const isZdane = opts.wynik === 'zdane';
@@ -588,10 +559,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
 
       if (isZdane) {
-        await sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
+        sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
           kto_id: opts.kto_zdawal,
           szkolenie: opts.szkolenie
-        });
+        }).catch(e => console.error('Błąd wysyłania szkolenia do Google Sheets:', e));
       }
     }
     else if (name === 'zagrozenie') {
@@ -606,26 +577,23 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
-else if (name === 'zawieszenie') {
-  description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+    else if (name === 'zawieszenie') {
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
 
-  // 🚫 USUŃ TO - wysyłanie wiadomości jest poniżej dla wszystkich komend!
-  // const sentMessage = await sendChannelMessage(cfg.channel, { ... });
+      // Operacje w tle (bez await) - FIX: dodaj URL do Google Sheets!
+      if (opts.kto) {
+        sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
+          kto_id: opts.kto,
+          zawieszenie: true 
+        }).catch(e => console.error('Błąd wysyłania zawieszenia do Google Sheets:', e));
 
-  // ✅ ZOSTAW TYLKO to - operacje w tle:
-  if (opts.kto) {
-    sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-      kto_id: opts.kto,
-      zawieszenie: true 
-    }).catch(e => console.error('Błąd wysyłania zawieszenia do Google Sheets:', e));
-
-    const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
-    if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
-      addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId)
-        .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
+        const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
+        if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
+          addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId)
+            .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
+        }
+      }
     }
-  }
-}
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
       description = `Kto: ${opts.imie_nazwisko}\nPowód: **${opts.powod}**\nNadane przez: <@${interaction.member.user.id}>\n\n${data}`;
@@ -640,7 +608,6 @@ else if (name === 'zawieszenie') {
     }
     else if (name === 'zebranie') {
       const roleId = guildConfig.PING_ROLE_ID;
-      // FIX: jeśli PING_ROLE_ID jest placeholderem ("ID"), nie wysyłamy złamanego mentiona / przypadkowego @everyone.
       const pingMention = (roleId && roleId !== "ID") ? `<@&${roleId}>` : "";
       content = pingMention || "";
 
@@ -654,23 +621,20 @@ else if (name === 'zawieszenie') {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
 
-    // Wysłanie wiadomości na odpowiedni kanał
+    // ✅ WSPÓLNE WYSYŁANIE DLA WSZYSTKICH KOMEND (RAZ!)
     const sentMessage = await sendChannelMessage(cfg.channel, { content, embeds: [{ title: cfg.title, color: finalColor, description }], components });
 
-    // FIX: jeśli wysyłka się nie powiodła (np. zły ID kanału, brak uprawnień bota), informujemy o tym
-    // zamiast bezwarunkowo zwracać "✅ Komenda wykonana!".
     if (!sentMessage) {
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `⚠️ Komenda ${name} przetworzona, ale wystąpił błąd przy wysyłaniu wiadomości na kanał docelowy. Sprawdź uprawnienia bota i konfigurację kanału.`, flags: 64 } });
     }
 
-    // FIX: dopiero gdy wiadomość urlopu faktycznie wyszła, rejestrujemy jej ID jako "oczekujący" wniosek.
+    // Rejestracja wniosku urlopowego jako oczekujący
     if (name === 'urlop' && sentMessage.id) {
       pendingUrlopMessages.add(sentMessage.id);
       usersWithPendingUrlop.add(interaction.member.user.id);
     }
 
-    // --- LOGOWANIE UŻYCIA KOMENDY ---
-    // Formatowanie opcji komendy do ładnego tekstu
+    // --- LOGOWANIE UŻYCIA KOMENDY (W TLE) ---
     let opcjeTekst = "";
     if (Object.keys(opts).length > 0) {
       for (const [key, value] of Object.entries(opts)) {
@@ -680,23 +644,21 @@ else if (name === 'zawieszenie') {
       opcjeTekst = "Brak argumentów.";
     }
 
-    await sendWebhookLog(guildConfig.WEBHOOK_URL, {
+    sendWebhookLog(guildConfig.WEBHOOK_URL, {
       title: `🛠️ Użyto komendy: /${name}`,
       color: 3447003,
       description: `**Użytkownik:** <@${interaction.member.user.id}>\n**Kanał:** <#${interaction.channel_id}>\n\n**Przekazane dane:**\n${opcjeTekst}`,
       timestamp: new Date().toISOString()
-    });
+    }).catch(e => console.error('Błąd logowania komendy:', e));
 
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
   }
 
-  // FIX: fallback dla typów interakcji, które nie trafiły w żaden z powyższych blocków
-  // (np. AUTOCOMPLETE albo nieznany typ w przyszłości) — bez tego Express zawiesi request.
+  // Fallback dla nieznanych typów interakcji
   return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieobsługiwany typ interakcji.", flags: 64 } });
 });
 
 app.listen(PORT, () => {
   console.log(`🤖 Bot działa na porcie ${PORT}`);
-  // Log "bot zaktualizowany" wysyłany przy każdym starcie/restarcie procesu (np. po deployu na Railway).
   announceUpdateToAllServers();
 });
