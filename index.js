@@ -45,6 +45,23 @@ for (const [guildId, cfg] of Object.entries(serverConfigs)) {
 const pendingUrlopMessages = new Set();
 const usersWithPendingUrlop = new Set();
 
+// Funkcja do pobrania info o guildzie (nazwa)
+async function getGuildInfo(guildId) {
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+      headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+    });
+    if (!res.ok) {
+      console.error(`Błąd pobierania info o guildzie: HTTP ${res.status}`);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.error(`Błąd pobierania info o guildzie:`, e);
+    return null;
+  }
+}
+
 // Funkcja do dodawania roli użytkownikowi na Discordzie
 async function addRoleToMember(guildId, userId, roleId) {
   if (!roleId || roleId === "ID") {
@@ -533,6 +550,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     let description = "", content = opts.kto ? `<@${opts.kto}>` : "", components = [];
     let finalColor = cfg.color;
 
+    // Pobierz informacje o guildzie (dla DM-ów)
+    const guildInfo = await getGuildInfo(interaction.guild_id);
+    const guildName = guildInfo?.name || "Nieznany serwer";
+
     // --- PRZYGOTOWANIE TREŚCI KOMEND ---
     if (name === 'urlop') {
       const dniLabel = dni === 1 ? "dzień" : "dni";
@@ -580,8 +601,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     else if (name === 'zawieszenie') {
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
 
-      // Operacje w tle (bez await) - FIX: dodaj URL do Google Sheets!
+      // DM do zawieszonej osoby (w tle)
       if (opts.kto) {
+        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **ZAWIESZONY** na ${opts.czas} z powodu ${opts.powod}`;
+        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM zawieszenia:', e));
+
         sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
           kto_id: opts.kto,
           zawieszenie: true 
@@ -597,14 +621,46 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+
+      // DM do zwolnionej osoby (w tle)
+      if (opts.kto) {
+        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **ZWOLNIONY** z powodu ${opts.powod}`;
+        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM zwolnienia:', e));
+      }
     }
     else if (name === 'nagana') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Która nagana:** ${opts.ktora_nagana}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+
+      // DM do ukaranej osoby (w tle)
+      if (opts.kto) {
+        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Została nałożona na ciebie ${opts.ktora_nagana} **NAGANA** z powodu ${opts.powod}`;
+        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM nagany:', e));
+      }
     }
     else if (name === 'kara_finansowa') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+    }
+    else if (name === 'awans') {
+      content = `<@${opts.kto}>`;
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Awansowany przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+
+      // DM do awansowanej osoby (w tle)
+      if (opts.kto) {
+        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **AWANSOWANY** na ${opts.stopien} z powodu ${opts.powod} twój nowy numer odznaki to: ${opts.odznaka}`;
+        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM awansu:', e));
+      }
+    }
+    else if (name === 'degradacja') {
+      content = `<@${opts.kto}>`;
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Zdegradowany przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+
+      // DM do zdegradowanej osoby (w tle)
+      if (opts.kto) {
+        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **ZDEGRADOWANY** na ${opts.stopien} z powodu ${opts.powod} twój nowy numer odznaki to: ${opts.odznaka}`;
+        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM degradacji:', e));
+      }
     }
     else if (name === 'zebranie') {
       const roleId = guildConfig.PING_ROLE_ID;
@@ -616,9 +672,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                     `**Godzina:** ${opts.godzina}\n` +
                     `**Miejsce Zebrania:** ${opts.miejsce}\n\n` +
                     `*Dziś o ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}*`;
-    }
-    else {
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
 
     // ✅ WSPÓLNE WYSYŁANIE DLA WSZYSTKICH KOMEND (RAZ!)
