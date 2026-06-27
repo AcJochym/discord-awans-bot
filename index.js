@@ -660,6 +660,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Która nagana:** ${opts.ktora_nagana}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
 
+      sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
+        kto_id: opts.kto,
+        nagana: opts.ktora_nagana
+      }).catch(e => console.error('Błąd wysyłania do Google Sheets:', e));
+      
       // DM do ukaranej osoby (w tle)
       if (opts.kto) {
         const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Została nałożona na ciebie **${opts.ktora_nagana}** **NAGANA** z powodu **${opts.powod}**`;
