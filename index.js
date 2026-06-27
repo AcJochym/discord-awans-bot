@@ -596,7 +596,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
-      description = `Kto: ${opts.imie_nazwisko}\nPowód: **${opts.powod}**\nNadane przez: <@${interaction.member.user.id}>\n\n${data}`;
+      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
     else if (name === 'nagana') {
       content = `<@${opts.kto}>`;
