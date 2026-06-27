@@ -62,6 +62,28 @@ async function getGuildInfo(guildId) {
   }
 }
 
+// Funkcja do pobrania nazwy roli z mentiona lub ID
+async function getRoleName(guildId, roleInput) {
+  if (!roleInput) return roleInput;
+  
+  // Jeśli to mention roli <@&ROLE_ID>
+  const roleIdMatch = roleInput.match(/<@&(\d+)>/);
+  const roleId = roleIdMatch ? roleIdMatch[1] : roleInput;
+  
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles`, {
+      headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+    });
+    if (!res.ok) return roleInput;
+    const roles = await res.json();
+    const role = roles.find(r => r.id === roleId);
+    return role?.name || roleInput;
+  } catch (e) {
+    console.error('Błąd pobierania nazwy roli:', e);
+    return roleInput;
+  }
+}
+
 // Funkcja do dodawania roli użytkownikowi na Discordzie
 async function addRoleToMember(guildId, userId, roleId) {
   if (!roleId || roleId === "ID") {
@@ -579,6 +601,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       content = `<@${opts.kto_zdawal}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
 
+      // DM do osoby szkolonej (w tle)
+      if (opts.kto_zdawal) {
+        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Twoje szkolenie **${opts.szkolenie}** zostało **${opts.wynik}**!!!`;
+        sendDM(opts.kto_zdawal, dmMessage).catch(e => console.error('Błąd wysyłania DM szkolenia:', e));
+      }
+
       if (isZdane) {
         sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
           kto_id: opts.kto_zdawal,
@@ -603,7 +631,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       // DM do zawieszonej osoby (w tle)
       if (opts.kto) {
-        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **ZAWIESZONY** na ${opts.czas} z powodu ${opts.powod}`;
+        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZAWIESZONY** na **${opts.czas}** z powodu **${opts.powod}**`;
         sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM zawieszenia:', e));
 
         sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
@@ -624,7 +652,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       // DM do zwolnionej osoby (w tle)
       if (opts.kto) {
-        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **ZWOLNIONY** z powodu ${opts.powod}`;
+        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZWOLNIONY** z powodu **${opts.powod}**`;
         sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM zwolnienia:', e));
       }
     }
@@ -634,7 +662,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       // DM do ukaranej osoby (w tle)
       if (opts.kto) {
-        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Została nałożona na ciebie ${opts.ktora_nagana} **NAGANA** z powodu ${opts.powod}`;
+        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Została nałożona na ciebie **${opts.ktora_nagana}** **NAGANA** z powodu **${opts.powod}**`;
         sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM nagany:', e));
       }
     }
@@ -648,7 +676,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       // DM do awansowanej osoby (w tle)
       if (opts.kto) {
-        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **AWANSOWANY** na ${opts.stopien} z powodu ${opts.powod} twój nowy numer odznaki to: ${opts.odznaka}`;
+        const roleName = await getRoleName(interaction.guild_id, opts.stopien);
+        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **AWANSOWANY** na **${roleName}** z powodu **${opts.powod}** twój nowy numer odznaki to: ${opts.odznaka}`;
         sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM awansu:', e));
       }
     }
@@ -658,7 +687,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
       // DM do zdegradowanej osoby (w tle)
       if (opts.kto) {
-        const dmMessage = `**${guildName}** - ${opts.imie_nazwisko} Zostałeś **ZDEGRADOWANY** na ${opts.stopien} z powodu ${opts.powod} twój nowy numer odznaki to: ${opts.odznaka}`;
+        const roleName = await getRoleName(interaction.guild_id, opts.stopien);
+        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZDEGRADOWANY** na **${roleName}** z powodu **${opts.powod}** twój nowy numer odznaki to: ${opts.odznaka}`;
         sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM degradacji:', e));
       }
     }
