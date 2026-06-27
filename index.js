@@ -606,21 +606,37 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       finalColor = 5763719;
       description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
     }
-    else if (name === 'zawieszenie') {
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+else if (name === 'zawieszenie') {
+  description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
 
-await sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-  kto_id: opts.kto,
-  zawieszenie: true 
-});
+  // Wysłanie wiadomości na kanał (SYNCHRONICZNIE)
+  const sentMessage = await sendChannelMessage(cfg.channel, { content, embeds: [{ title: cfg.title, color: finalColor, description }], components });
 
-        const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
-        if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
-          await addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId)
-            .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
-        }
-      }
+  // FIX: Już teraz odpowiadamy Discordowi!
+  // (Pozostałe operacje pójdą w tle)
+  
+  // Zaplanuj operacje w tle (bez czekania)
+  if (opts.kto) {
+    sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {  // ← Dodaj URL!
+      kto_id: opts.kto,
+      zawieszenie: true 
+    }).catch(e => console.error('Błąd wysyłania zawieszenia do Google Sheets:', e));
+
+    const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
+    if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
+      addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId)
+        .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
     }
+  }
+
+  // Logowanie (też w tle)
+  sendWebhookLog(guildConfig.WEBHOOK_URL, {
+    title: `🛠️ Użyto komendy: /zawieszenie`,
+    color: 3447003,
+    description: `**Użytkownik:** <@${interaction.member.user.id}>\n**Kanał:** <#${interaction.channel_id}>\n\n**Kto:** ${opts.imie_nazwisko}`,
+    timestamp: new Date().toISOString()
+  }).catch(e => console.error('Błąd logowania:', e));
+}
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
       description = `Kto: ${opts.imie_nazwisko}\nPowód: **${opts.powod}**\nNadane przez: <@${interaction.member.user.id}>\n\n${data}`;
