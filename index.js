@@ -609,15 +609,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 else if (name === 'zawieszenie') {
   description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
 
-  // Wysłanie wiadomości na kanał (SYNCHRONICZNIE)
-  const sentMessage = await sendChannelMessage(cfg.channel, { content, embeds: [{ title: cfg.title, color: finalColor, description }], components });
+  // 🚫 USUŃ TO - wysyłanie wiadomości jest poniżej dla wszystkich komend!
+  // const sentMessage = await sendChannelMessage(cfg.channel, { ... });
 
-  // FIX: Już teraz odpowiadamy Discordowi!
-  // (Pozostałe operacje pójdą w tle)
-  
-  // Zaplanuj operacje w tle (bez czekania)
+  // ✅ ZOSTAW TYLKO to - operacje w tle:
   if (opts.kto) {
-    sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {  // ← Dodaj URL!
+    sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
       kto_id: opts.kto,
       zawieszenie: true 
     }).catch(e => console.error('Błąd wysyłania zawieszenia do Google Sheets:', e));
@@ -628,14 +625,6 @@ else if (name === 'zawieszenie') {
         .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
     }
   }
-
-  // Logowanie (też w tle)
-  sendWebhookLog(guildConfig.WEBHOOK_URL, {
-    title: `🛠️ Użyto komendy: /zawieszenie`,
-    color: 3447003,
-    description: `**Użytkownik:** <@${interaction.member.user.id}>\n**Kanał:** <#${interaction.channel_id}>\n\n**Kto:** ${opts.imie_nazwisko}`,
-    timestamp: new Date().toISOString()
-  }).catch(e => console.error('Błąd logowania:', e));
 }
     else if (name === 'zwolnij') {
       content = `<@${opts.kto}>`;
