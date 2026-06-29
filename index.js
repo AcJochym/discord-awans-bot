@@ -722,7 +722,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
 
       // --- KOMENDA: /wyslij_ogloszenie ---
-    if (name === 'wyslij_ogloszenie') {
+   else if (name === 'wyslij_ogloszenie') {
       // 1. Sprawdzenie uprawnień właściciela
       if (interaction.member.user.id !== BOT_OWNER_ID) {
         return res.json({ 
