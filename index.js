@@ -721,9 +721,9 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
     }
 
-      // --- KOMENDA: /wyslij_ogloszenie ---
-   else if (name === 'wyslij_ogloszenie') {
-      // 1. Sprawdzenie uprawnień właściciela
+     // --- KOMENDA: /wyslij_ogloszenie ---
+    else if (name === 'wyslij_ogloszenie') {
+      // 1. Sprawdzenie uprawnień
       if (interaction.member.user.id !== BOT_OWNER_ID) {
         return res.json({ 
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, 
@@ -731,27 +731,25 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         });
       }
 
-      // 2. Pobranie danych z komendy
-      // Oczekujemy, że komenda ma opcje: 'kanal' (channel) oraz 'tresc' (string)
       const targetChannelId = opts.kanal;
       const messageContent = opts.tresc;
 
-      try {
-        // 3. Wysyłanie wiadomości na kanał
-        await sendChannelMessage(targetChannelId, { content: messageContent });
+      // 2. Odroczona odpowiedź (Defer) - zapobiega błędowi "Aplikacja nie odpowiedziała"
+      // Wysyłamy typ 5, co oznacza "Bot myśli"
+      res.json({ type: 5 });
+
+      // 3. Wysyłanie wiadomości w tle
+      sendChannelMessage(targetChannelId, { content: messageContent })
+        .then(() => {
+          // Opcjonalnie: możesz tutaj wysłać edycję wiadomości (followup), 
+          // żeby bot napisał w logach, że się udało, ale zazwyczaj nie jest to konieczne.
+          console.log(`Ogłoszenie wysłane na kanał ${targetChannelId}`);
+        })
+        .catch(error => {
+          console.error('Błąd wysyłania ogłoszenia:', error);
+        });
         
-        // 4. Odpowiedź zwrotna do właściciela
-        return res.json({ 
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, 
-          data: { content: `✅ Wiadomość została wysłana na kanał <#${targetChannelId}>!`, flags: 64 } 
-        });
-      } catch (error) {
-        console.error('Błąd wysyłania ogłoszenia:', error);
-        return res.json({ 
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, 
-          data: { content: "❌ Wystąpił błąd podczas wysyłania wiadomości. Sprawdź, czy bot ma uprawnienia do tego kanału.", flags: 64 } 
-        });
-      }
+      return; 
     }
       
     else if (name === 'degradacja') {
