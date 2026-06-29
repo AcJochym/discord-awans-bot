@@ -679,7 +679,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       else if (name === 'dodaj_pojazd') {
       const isTurbo = opts.turbo ? "Tak" : "Nie";
       
-      description = `**Rejestrujący:** <@${interaction.member.user.id}>\n` +
+      description = `**Właściciel / Rejestrujący:** <@${interaction.member.user.id}>\n` +
                     `**Tablica Rejestracyjna:** ${opts.tablica}\n` +
                     `**Model pojazdu:** ${opts.model}\n` +
                     `**Klasa pojazdu:** ${opts.klasa}\n` +
@@ -691,6 +691,22 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                     `> **Zawieszenie:** ${opts.zawieszenie}\n` +
                     `> **Turbo:** ${isTurbo}\n\n` +
                     `**Data dodania do rejestru:** ${data}`;
+
+      // --- TO JEST TEN BRAKUJĄCY FRAGMENT ---
+      // Wysyłamy dane prosto do Google Sheets (w tle)
+      sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
+        nowy_pojazd: true,
+        tablica: opts.tablica,
+        model: opts.model,
+        klasa: opts.klasa,
+        przeglad: opts.przeglad,
+        silnik: opts.silnik,
+        hamulce: opts.hamulce,
+        skrzynia: opts.skrzynia,
+        zawieszenie: opts.zawieszenie,
+        turbo: isTurbo
+      }).catch(e => console.error('Błąd wysyłania radiowozu do Google Sheets:', e));
+      // ---------------------------------------
     }
     else if (name === 'awans') {
       content = `<@${opts.kto}>`;
