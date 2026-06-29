@@ -783,36 +783,3 @@ app.listen(PORT, () => {
   console.log(`🤖 Bot działa na porcie ${PORT}`);
   announceUpdateToAllServers();
 });
-
-
-// Endpoint odbierający sygnały z Google
-app.post('/api/doc-updated', async (req, res) => {
-  const { secret, docName, docUrl, dateStr, type } = req.body;
-
-  if (secret !== process.env.SITE_SECRET) return res.status(401).send('Unauthorized');
-  res.status(200).json({ status: 'ok' });
-
-  // Konfiguracja dla każdego typu dokumentu
-  const configs = {
-    SITE: { title: "STRONA FTD ZOSTAŁA ZAKTUALIZOWANA!", color: 3066993, webhooks: ["URL_1", "URL_2"] },
-    KOMPENDIUM: { title: "AKTUALIZACJA KOMPENDIUM!", color: 1752220, webhooks: ["URL_A", "URL_B"] },
-    REGULAMIN: { title: "AKTUALIZACJA REGULAMINU!", color: 15158332, webhooks: ["URL_X", "URL_Y"] }
-  };
-
-  const cfg = configs[type] || { title: "AKTUALIZACJA", color: 3447003, webhooks: [] };
-  
-  const embed = {
-    title: cfg.title,
-    description: `Wykryto zmiany w: **${docName || "stronie FTD"}**.`,
-    color: cfg.color,
-    fields: [
-      { name: "🔗 Link", value: `[Kliknij tutaj](${docUrl || "https://sites.google.com/view/midway-ftd/"})`, inline: false },
-      { name: "📅 Data modyfikacji", value: dateStr, inline: true }
-    ],
-    timestamp: new Date().toISOString()
-  };
-
-  for (const url of cfg.webhooks) {
-    await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ content: "@everyone", embeds: [embed] })});
-  }
-});
