@@ -463,6 +463,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "• **/zagrozenie** — Wprowadza na serwerze stan zagrożenia. Automatycznie oznacza rolę `@everyone` (wyciszone w logach) i zmienia kolor embedu zależnie od wybranego poziomu (Zielony, Pomarańczowy, Czerwony, Czarny).\n" +
                 "• **/zebranie** — Uzupełniacie sobie date, godzine, miejsce zebrania. Tak w wielkim skrócie.\n" +
                 "• **/odwolaj_zagrozenie** — Przywraca normalny stan funkcjonowania serwera frakcji, informując o tym wszystkich członków.\n\n" +
+                "• **/dodaj_pojazd** — Rejestruje nowy pojazd w bazie frakcyjnej wraz ze specyfikacją tuningu i przesyła dane do arkusza Google.\n\n" +
                 "⚙️ **Jak zarządzać wnioskami urlopowymi (Akceptacja/Odrzucenie):**\n" +
                 "Kiedy użytkownik poprawnie wyśle wniosek urlopowy, pod wiadomością pojawią się dwa duże przyciski:\n" +
                 "1. **AKCEPTUJ (Zielony)** — Kliknięcie przycisku natychmiast zmienia kolor całego wniosku na zielony, usuwa przyciski z kanału (żeby nikt nie kliknął drugi raz) i automatycznie wysyła do pracownika prywatną wiadomość (DM) o pozytywnym rozpatrzeniu.\n" +
