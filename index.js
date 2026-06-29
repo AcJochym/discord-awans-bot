@@ -721,22 +721,39 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
     }
 
-else if (name === 'wyslij_ogloszenie') {
-      if (interaction.member.user.id !== BOT_OWNER_ID) {
-        return res.json({ type: 4, data: { content: "❌ Brak uprawnień.", flags: 64 } });
+if (name === 'wyslij_ogloszenie') {
+  // 1. ✅ Sprawdzenie uprawień (BOT_OWNER_ID)
+  if (interaction.member.user.id !== BOT_OWNER_ID) {
+    return res.json({ 
+      type: 4, 
+      data: { content: "❌ Brak uprawnień. Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } 
+    });
+  }
+
+  // 2. ✅ WALIDACJA — Czy treść nie jest pusta!
+  const tresc = opts.tresc;
+  if (!tresc || tresc.trim() === "") {
+    return res.json({ 
+      type: 4, 
+      data: { content: "❌ Treść ogłoszenia nie może być pusta!", flags: 64 } 
+    });
+  }
+
+  // 3. ✅ Wysyłka w tle + error handling
+  sendChannelMessage(interaction.channel_id, { content: tresc })
+    .then((result) => {
+      if (result && result.id) {
+        console.log(`✅ Ogłoszenie wysłane (ID: ${result.id})`);
       }
+    })
+    .catch(err => console.error("❌ Błąd wysyłania ogłoszenia:", err));
 
-      // 1. Zamiast czekać, po prostu wyślij wiadomość "w tle"
-      sendChannelMessage(interaction.channel_id, { content: opts.tresc })
-        .then(() => console.log("Wysłano ogłoszenie"))
-        .catch(err => console.error("Błąd wysyłania:", err));
-
-      // 2. Natychmiastowa odpowiedź (tylko dla właściciela)
-      return res.json({ 
-        type: 4, 
-        data: { content: "✅ Ogłoszenie wysłane na kanał!", flags: 64 } 
-      });
-    }
+  // 4. ✅ Natychmiastowa odpowiedź
+  return res.json({ 
+    type: 4, 
+    data: { content: "✅ Ogłoszenie wysyłane na kanał... (sprawdzanie w tle)", flags: 64 } 
+  });
+}
       
     else if (name === 'degradacja') {
       content = `<@${opts.kto}>`;
