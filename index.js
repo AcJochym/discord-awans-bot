@@ -722,10 +722,19 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     }
 
 else if (name === 'wyslij_ogloszenie') {
-      // BARDZO PROSTA ODPOWIEDŹ
+      if (interaction.member.user.id !== BOT_OWNER_ID) {
+        return res.json({ type: 4, data: { content: "❌ Brak uprawnień.", flags: 64 } });
+      }
+
+      // 1. Zamiast czekać, po prostu wyślij wiadomość "w tle"
+      sendChannelMessage(interaction.channel_id, { content: opts.tresc })
+        .then(() => console.log("Wysłano ogłoszenie"))
+        .catch(err => console.error("Błąd wysyłania:", err));
+
+      // 2. Natychmiastowa odpowiedź (tylko dla właściciela)
       return res.json({ 
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, 
-        data: { content: "✅ Test odpowiedzi: Działa!", flags: 64 } 
+        type: 4, 
+        data: { content: "✅ Ogłoszenie wysłane na kanał!", flags: 64 } 
       });
     }
       
