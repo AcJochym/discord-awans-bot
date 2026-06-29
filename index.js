@@ -677,7 +677,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
       else if (name === 'dodaj_pojazd') {
-      const isTurbo = opts.turbo ? "Tak" : "Nie";
+      const isTurbo = opts.turbo ? "TRUE" : "FALSE";
       
       description = `**Właściciel / Rejestrujący:** <@${interaction.member.user.id}>\n` +
                     `**Tablica Rejestracyjna:** ${opts.tablica}\n` +
