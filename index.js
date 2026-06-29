@@ -556,6 +556,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       zwolnij: { title: 'ZWOLNIENIE', color: 15158332, channel: guildConfig.CHANNELS.ZWOLNIENIA },
       nagana: { title: 'NAGANA', color: 16711680, channel: guildConfig.CHANNELS.NAGANA },
       zebranie: { title: 'ZEBRANIE', color: 5793266, channel: guildConfig.CHANNELS.ZEBRANIE },
+      dodaj_pojazd: { title: 'NOWY POJAZD W BAZIE', color: 3447003, channel: guildConfig.CHANNELS.POJAZDY },
       kara_finansowa: { title: 'KARA FINANSOWA', color: 16766720, channel: guildConfig.CHANNELS.KARY }
     };
 
@@ -674,6 +675,22 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     else if (name === 'kara_finansowa') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
+    }
+      else if (name === 'dodaj_pojazd') {
+      const isTurbo = opts.turbo ? "Tak" : "Nie";
+      
+      description = `**Rejestrujący:** <@${interaction.member.user.id}>\n` +
+                    `**Tablica Rejestracyjna:** ${opts.tablica}\n` +
+                    `**Model pojazdu:** ${opts.model}\n` +
+                    `**Klasa pojazdu:** ${opts.klasa}\n` +
+                    `**Ważność przeglądu:** ${opts.przeglad}\n\n` +
+                    `🔧 **Modyfikacje (Tuning):**\n` +
+                    `> **Silnik:** ${opts.silnik}\n` +
+                    `> **Hamulce:** ${opts.hamulce}\n` +
+                    `> **Skrzynia biegów:** ${opts.skrzynia}\n` +
+                    `> **Zawieszenie:** ${opts.zawieszenie}\n` +
+                    `> **Turbo:** ${isTurbo}\n\n` +
+                    `**Data dodania do rejestru:** ${data}`;
     }
     else if (name === 'awans') {
       content = `<@${opts.kto}>`;
