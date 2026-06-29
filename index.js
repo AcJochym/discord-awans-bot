@@ -463,7 +463,8 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "• **/zagrozenie** — Wprowadza na serwerze stan zagrożenia. Automatycznie oznacza rolę `@everyone` (wyciszone w logach) i zmienia kolor embedu zależnie od wybranego poziomu (Zielony, Pomarańczowy, Czerwony, Czarny).\n" +
                 "• **/zebranie** — Uzupełniacie sobie date, godzine, miejsce zebrania. Tak w wielkim skrócie.\n" +
                 "• **/odwolaj_zagrozenie** — Przywraca normalny stan funkcjonowania serwera frakcji, informując o tym wszystkich członków.\n\n" +
-                "• **/dodaj_pojazd** — Rejestruje nowy pojazd w bazie frakcyjnej wraz ze specyfikacją tuningu i przesyła dane do arkusza Google.\n\n" +
+                "• **/dodaj_pojazd** — Rejestruje nowy pojazd w bazie frakcyjnej wraz ze specyfikacją tuningu i przesyła dane do arkusza Google.\n" +
+                "• **/wyslij_ogloszenie** — Wysyła ogłoszenie na kanał (dostępne tylko dla właściciela bota).\n\n" +
                 "⚙️ **Jak zarządzać wnioskami urlopowymi (Akceptacja/Odrzucenie):**\n" +
                 "Kiedy użytkownik poprawnie wyśle wniosek urlopowy, pod wiadomością pojawią się dwa duże przyciski:\n" +
                 "1. **AKCEPTUJ (Zielony)** — Kliknięcie przycisku natychmiast zmienia kolor całego wniosku na zielony, usuwa przyciski z kanału (żeby nikt nie kliknął drugi raz) i automatycznie wysyła do pracownika prywatną wiadomość (DM) o pozytywnym rozpatrzeniu.\n" +
@@ -541,8 +542,51 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     const memberRoles = interaction.member.roles || [];
     const hasAdminRole = guildConfig.REQUIRED_ROLE_IDS && guildConfig.REQUIRED_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
 
-    if (name !== 'urlop' && !hasAdminRole) {
+    if (name !== 'urlop' && name !== 'wyslij_ogloszenie' && !hasAdminRole) {
       return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Brak uprawnień.", flags: 64 } });
+    }
+
+    // --- SPECJALNA OBSŁUGA /wyslij_ogloszenie ---
+    if (name === 'wyslij_ogloszenie') {
+      // Sprawdź uprawnienia właściciela
+      if (interaction.member.user.id !== BOT_OWNER_ID) {
+        return res.json({ 
+          type: 4, 
+          data: { content: "❌ Brak uprawnień. Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } 
+        });
+      }
+
+      // Sprawdź czy jest treść
+      const tresc = opts.tresc;
+      if (!tresc || tresc.trim() === "") {
+        return res.json({ 
+          type: 4, 
+          data: { content: "❌ Treść ogłoszenia nie może być pusta!", flags: 64 } 
+        });
+      }
+
+      // ✅ NATYCHMIAST odpowiedz (PIERWSZA LINIA!)
+      res.json({ 
+        type: 4, 
+        data: { content: "✅ Ogłoszenie wysyłane...", flags: 64 } 
+      });
+
+      // 🔥 POTEM wysyłaj w tle (bez czekania) - setImmediate to unika blokowania
+      setImmediate(async () => {
+        try {
+          const result = await sendChannelMessage(interaction.channel_id, { content: tresc });
+          if (result && result.id) {
+            console.log(`✅ Ogłoszenie wysłane na kanał ${interaction.channel_id} (ID: ${result.id})`);
+          } else {
+            console.log("⚠️ Wiadomość wysłana, ale brak ID");
+          }
+        } catch (err) {
+          console.error(`❌ Błąd wysyłania ogłoszenia: ${err.message}`);
+        }
+      });
+
+      // Nie rób return - res.json() już wysłano
+      return;
     }
 
     // Mapowanie komend na kanały z configu danego serwera
@@ -677,7 +721,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
     }
-      else if (name === 'dodaj_pojazd') {
+    else if (name === 'dodaj_pojazd') {
       const isTurbo = opts.turbo ? "TRUE" : "FALSE";
       
       description = `**Właściciel / Rejestrujący:** <@${interaction.member.user.id}>\n` +
@@ -693,8 +737,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                     `> **Turbo:** ${isTurbo}\n\n` +
                     `**Data dodania do rejestru:** ${data}`;
 
-      // --- TO JEST TEN BRAKUJĄCY FRAGMENT ---
-      // Wysyłamy dane prosto do Google Sheets (w tle)
       sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
         nowy_pojazd: true,
         tablica: opts.tablica,
@@ -706,8 +748,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         skrzynia: opts.skrzynia,
         zawieszenie: opts.zawieszenie,
         turbo: isTurbo
-      }).catch(e => console.error('Błąd wysyłania radiowozu do Google Sheets:', e));
-      // ---------------------------------------
+      }).catch(e => console.error('Błąd wysyłania pojazdu do Google Sheets:', e));
     }
     else if (name === 'awans') {
       content = `<@${opts.kto}>`;
@@ -720,41 +761,6 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM awansu:', e));
       }
     }
-
-if (name === 'wyslij_ogloszenie') {
-  // 1. ✅ Sprawdzenie uprawień (BOT_OWNER_ID)
-  if (interaction.member.user.id !== BOT_OWNER_ID) {
-    return res.json({ 
-      type: 4, 
-      data: { content: "❌ Brak uprawnień. Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } 
-    });
-  }
-
-  // 2. ✅ WALIDACJA — Czy treść nie jest pusta!
-  const tresc = opts.tresc;
-  if (!tresc || tresc.trim() === "") {
-    return res.json({ 
-      type: 4, 
-      data: { content: "❌ Treść ogłoszenia nie może być pusta!", flags: 64 } 
-    });
-  }
-
-  // 3. ✅ Wysyłka w tle + error handling
-  sendChannelMessage(interaction.channel_id, { content: tresc })
-    .then((result) => {
-      if (result && result.id) {
-        console.log(`✅ Ogłoszenie wysłane (ID: ${result.id})`);
-      }
-    })
-    .catch(err => console.error("❌ Błąd wysyłania ogłoszenia:", err));
-
-  // 4. ✅ Natychmiastowa odpowiedź
-  return res.json({ 
-    type: 4, 
-    data: { content: "✅ Ogłoszenie wysyłane na kanał... (sprawdzanie w tle)", flags: 64 } 
-  });
-}
-      
     else if (name === 'degradacja') {
       content = `<@${opts.kto}>`;
       description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Zdegradowany przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
