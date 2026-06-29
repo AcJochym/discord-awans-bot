@@ -785,53 +785,34 @@ app.listen(PORT, () => {
 });
 
 
-// ==========================================
-// ODBIORNIK AKTUALIZACJI STRONY FTD Z GOOGLE SITES
-// ==========================================
-app.post('/api/site-updated', async (req, res) => {
-  // Zabezpieczenie: sprawdzamy, czy to na pewno nasz skrypt Google to wysłał
-  const { secret, dateStr } = req.body;
-  if (secret !== process.env.SITE_SECRET) {
-    return res.status(401).json({ error: 'Brak uprawnień' });
-  }
+// Endpoint odbierający sygnały z Google
+app.post('/api/doc-updated', async (req, res) => {
+  const { secret, docName, docUrl, dateStr, type } = req.body;
 
-  console.log(`🚀 Odebrano sygnał o aktualizacji strony FTD z datą: ${dateStr}`);
-  res.json({ message: 'Sygnał odebrany. Bot rozpoczyna wysyłanie.' }); // Szybka odpowiedź, żeby Google się nie zawiesiło
+  if (secret !== process.env.SITE_SECRET) return res.status(401).send('Unauthorized');
+  res.status(200).json({ status: 'ok' });
 
-  // Budujemy ładną wiadomość (Bot robi to o wiele lepiej)
+  // Konfiguracja dla każdego typu dokumentu
+  const configs = {
+    SITE: { title: "STRONA FTD ZOSTAŁA ZAKTUALIZOWANA!", color: 3066993, webhooks: ["URL_1", "URL_2"] },
+    KOMPENDIUM: { title: "AKTUALIZACJA KOMPENDIUM!", color: 1752220, webhooks: ["URL_A", "URL_B"] },
+    REGULAMIN: { title: "AKTUALIZACJA REGULAMINU!", color: 15158332, webhooks: ["URL_X", "URL_Y"] }
+  };
+
+  const cfg = configs[type] || { title: "AKTUALIZACJA", color: 3447003, webhooks: [] };
+  
   const embed = {
-    title: "STRONA FTD ZOSTAŁA ZAKTUALIZOWANA!",
-    description: `Wykryto nową publikację w projekcie **FTD | midway.gg**.`,
-    color: 3066993,
+    title: cfg.title,
+    description: `Wykryto zmiany w: **${docName || "stronie FTD"}**.`,
+    color: cfg.color,
     fields: [
-      { name: "🔗 Link do strony", value: "https://sites.google.com/view/midway-ftd/", inline: false },
-      { name: "📅 Data i godzina publikacji", value: dateStr || "Nieznana data", inline: true }
+      { name: "🔗 Link", value: `[Kliknij tutaj](${docUrl || "https://sites.google.com/view/midway-ftd/"})`, inline: false },
+      { name: "📅 Data modyfikacji", value: dateStr, inline: true }
     ],
     timestamp: new Date().toISOString()
   };
 
-  // Twoja lista Webhooków (możesz ją też przenieść do .env)
-  const webhooks = [
-    "https://discord.com/api/webhooks/1512524490377138247/gmdylwK5fPwoUWImymrGfXRb5cc_KVXdY2i3qzxS4gwqUhxVIqahvUr1yb4Y5y_uc--j",
-    "https://discord.com/api/webhooks/1512549635187675198/2ByY53sVyKMq8EBasfJ8t3_l_RKLhRBTlnCVAS7x3e07oSpZ1vJP7RXAaAhLN7IXHhK8"
-  ];
-
-  // Bot elegancko rozsyła webhooki
-  for (const url of webhooks) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: "@everyone", embeds: [embed] })
-      });
-
-      if (!response.ok) {
-        console.error(`Błąd wysyłania na webhook: HTTP ${response.status}`);
-      } else {
-        console.log('✅ Wysłano powiadomienie o stronie na Discorda.');
-      }
-    } catch (e) {
-      console.error("Błąd sieci bota podczas wysyłania powiadomienia:", e);
-    }
+  for (const url of cfg.webhooks) {
+    await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ content: "@everyone", embeds: [embed] })});
   }
 });
