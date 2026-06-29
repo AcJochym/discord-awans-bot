@@ -721,30 +721,25 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       }
     }
 
-     // --- KOMENDA: /wyslij_ogloszenie ---
+     // --- KOMENDA: /wyslij_ogloszenie (Wysyła tam, gdzie napisano) ---
     else if (name === 'wyslij_ogloszenie') {
-      // 1. Sprawdzenie uprawnień
+      // 1. Sprawdzenie uprawnień właściciela
       if (interaction.member.user.id !== BOT_OWNER_ID) {
         return res.json({ 
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, 
-          data: { content: "❌ Ta komenda jest dostępna tylko dla właściciela bota.", flags: 64 } 
+          data: { content: "❌ Tylko właściciel bota może użyć tej komendy!", flags: 64 } 
         });
       }
 
-      const targetChannelId = opts.kanal;
-      const messageContent = opts.tresc;
+      // 2. Pobranie treści i kanału z kontekstu
+      const messageContent = opts.tresc; // Wymaga opcji 'tresc'
+      const currentChannelId = interaction.channel_id;
 
-      // 2. Odroczona odpowiedź (Defer) - zapobiega błędowi "Aplikacja nie odpowiedziała"
-      // Wysyłamy typ 5, co oznacza "Bot myśli"
+      // 3. Defer (wysyłamy "myślący" status, żeby nie było timeoutu)
       res.json({ type: 5 });
 
-      // 3. Wysyłanie wiadomości w tle
-      sendChannelMessage(targetChannelId, { content: messageContent })
-        .then(() => {
-          // Opcjonalnie: możesz tutaj wysłać edycję wiadomości (followup), 
-          // żeby bot napisał w logach, że się udało, ale zazwyczaj nie jest to konieczne.
-          console.log(`Ogłoszenie wysłane na kanał ${targetChannelId}`);
-        })
+      // 4. Wysyłanie wiadomości na aktualny kanał
+      sendChannelMessage(currentChannelId, { content: messageContent })
         .catch(error => {
           console.error('Błąd wysyłania ogłoszenia:', error);
         });
