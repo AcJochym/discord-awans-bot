@@ -1,5 +1,5 @@
 {
-  "name": "discord-faction-bot",
+  "name": "frakcyjny-bot",
   "version": "1.0.0",
   "description": "Bot Discord do zarządzania frakcją (awanse, urlopy, nagany, szkolenia itd.)",
   "type": "module",
