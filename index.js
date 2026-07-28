@@ -3,8 +3,10 @@ import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'd
 import fetch from 'node-fetch';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.use(express.json());
+
+
 
 // --- TWOJE ID DISCORD (TYLKO TY MOŻESZ UŻYĆ /pomoc I /pomoc_urlop) ---
 const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
