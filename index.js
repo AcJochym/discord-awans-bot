@@ -823,7 +823,9 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
   return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Nieobsługiwany typ interakcji.", flags: 64 } });
 });
 
-app.listen(PORT, () => {
-  console.log(`🤖 Bot działa na porcie ${PORT}`);
+const SERVER_PORT = process.env.PORT || 8080;
+
+app.listen(SERVER_PORT, '0.0.0.0', () => {
+  console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
   announceUpdateToAllServers();
 });
