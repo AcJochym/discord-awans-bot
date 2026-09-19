@@ -1,6 +1,7 @@
 import express from 'express';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import fetch from 'node-fetch';
+import { handleTicketInteraction } from './tickets.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -315,6 +316,9 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Ten serwer nie jest skonfigurowany.", flags: 64 } });
   }
 
+  // --- 0. SYSTEM TICKETÓW (komendy /ticket_*, przyciski tkt_*, formularze tkt_modal_*) ---
+  if (await handleTicketInteraction(interaction, guildConfig, res)) return;
+
   // --- 1. OBSŁUGA MODALA (POWÓD ODRZUCENIA) ---
   if (interaction.type === 5) {
     const customId = interaction.data.custom_id;
@@ -467,6 +471,12 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
                 "• **/odwolaj_zagrozenie** — Przywraca normalny stan funkcjonowania serwera frakcji, informując o tym wszystkich członków.\n\n" +
                 "• **/dodaj_pojazd** — Rejestruje nowy pojazd w bazie frakcyjnej wraz ze specyfikacją tuningu i przesyła dane do arkusza Google.\n" +
                 "• **/wyslij_ogloszenie** — Wysyła ogłoszenie na kanał (dostępne tylko dla właściciela bota).\n\n" +
+                "🎫 **System ticketów:**\n" +
+                "• **/ticket_panel** — Wysyła na kanał panel z przyciskami do otwierania ticketów (tylko administracja).\n" +
+                "• **/ticket_zamknij** — Zamyka ticket, w którym użyto komendy (właściciel ticketu lub support).\n" +
+                "• **/ticket_dodaj** / **/ticket_usun** — Dodaje lub usuwa użytkownika z ticketu.\n" +
+                "• **/ticket_nazwa** — Zmienia nazwę kanału ticketu.\n" +
+                "W tickecie dostępne są przyciski: Zamknij, Przejmij, a po zamknięciu — Otwórz ponownie, Transkrypt i Usuń.\n\n" +
                 "⚙️ **Jak zarządzać wnioskami urlopowymi (Akceptacja/Odrzucenie):**\n" +
                 "Kiedy użytkownik poprawnie wyśle wniosek urlopowy, pod wiadomością pojawią się dwa duże przyciski:\n" +
                 "1. **AKCEPTUJ (Zielony)** — Kliknięcie przycisku natychmiast zmienia kolor całego wniosku na zielony, usuwa przyciski z kanału (żeby nikt nie kliknął drugi raz) i automatycznie wysyła do pracownika prywatną wiadomość (DM) o pozytywnym rozpatrzeniu.\n" +
