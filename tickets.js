@@ -88,7 +88,16 @@ const deferUpdate = (res) => res.json({ type: 6 });
 
 // ───────────────────────── Komponenty ─────────────────────────
 
-const btn = (label, style, custom_id, emoji) => ({ type: 2, label, style, custom_id, ...(emoji ? { emoji: { name: emoji } } : {}) });
+// Emoji: unicode ("❓") albo własne emoji serwera w formacie <:nazwa:ID> / <a:nazwa:ID>
+function parseEmoji(e) {
+  if (!e) return undefined;
+  const m = /^<(a?):(\w+):(\d+)>$/.exec(String(e).trim());
+  return m ? { name: m[2], id: m[3], animated: m[1] === 'a' } : { name: String(e).trim() };
+}
+const btn = (label, style, custom_id, emoji) => {
+  const em = parseEmoji(emoji);
+  return { type: 2, label, style, custom_id, ...(em ? { emoji: em } : {}) };
+};
 const row = (...components) => ({ type: 1, components });
 const ticketControls = () => row(btn('Zamknij', 4, 'tkt_close', '🔒'), btn('Przejmij', 3, 'tkt_claim', '✋'));
 const closedControls = () => row(btn('Otwórz ponownie', 3, 'tkt_reopen', '🔓'), btn('Transkrypt', 2, 'tkt_transcript', '📄'), btn('Usuń', 4, 'tkt_delete', '🗑️'));
@@ -98,7 +107,44 @@ const textInput = (custom_id, label, style, max_length) => row({ type: 4, custom
 
 // ───────────────────────── Pomocnicze ─────────────────────────
 
-const getTypes = (t) => (t.TYPES && t.TYPES.length ? t.TYPES : [{ ID: 'ogolny', LABEL: 'Otwórz ticket', EMOJI: '🎫' }]).slice(0, 5);
+const getTypes = (t) => (t.TYPES && t.TYPES.length ? t.TYPES : [{ ID: 'ogolny', LABEL: 'Otwórz ticket', EMOJI: '🎫' }]).slice(0, 25);
+
+// Komponenty panelu: 'przyciski' (do 25, po 5 w rzędzie) albo 'lista' (rozwijane menu, do 25 opcji)
+function buildPanelComponents(t, mode, placeholder) {
+  const types = getTypes(t);
+  if (mode === 'lista') {
+    return [row({
+      type: 3,
+      custom_id: 'tkt_select',
+      placeholder: String(placeholder || t.PLACEHOLDER || 'Wybierz kategorię...').slice(0, 150),
+      min_values: 1,
+      max_values: 1,
+      options: types.map(ty => {
+        const em = parseEmoji(ty.EMOJI);
+        return {
+          label: String(ty.LABEL).slice(0, 100),
+          value: String(ty.ID).slice(0, 100),
+          ...(ty.DESCRIPTION ? { description: String(ty.DESCRIPTION).slice(0, 100) } : {}),
+          ...(em ? { emoji: em } : {})
+        };
+      })
+    })];
+  }
+  const buttons = types.map(ty => btn(ty.LABEL, 1, `tkt_open_${ty.ID}`, ty.EMOJI));
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 5) rows.push(row(...buttons.slice(i, i + 5)));
+  return rows;
+}
+
+// Formularz otwarcia ticketu (wspólny dla przycisku i listy)
+const ticketModal = (type) => ({
+  type: 9,
+  data: {
+    custom_id: `tkt_modal_${type.ID}`,
+    title: `Nowy ticket — ${type.LABEL}`.slice(0, 45),
+    components: [textInput('temat', 'Temat', 1, 100), textInput('opis', 'Opisz swoją sprawę', 2, 1000)]
+  }
+});
 
 const memberRoles = (i) => i.member?.roles || [];
 const isAdmin = (i, g) => (g.REQUIRED_ROLE_IDS || []).some(r => memberRoles(i).includes(r));
@@ -314,16 +360,17 @@ async function handleCommand(interaction, guildConfig, t, res) {
 
   if (name === 'ticket_panel') {
     if (!isAdmin(interaction, guildConfig)) return done('❌ Brak uprawnień.');
-    const buttons = getTypes(t).map(ty => btn(ty.LABEL, 1, `tkt_open_${ty.ID}`, ty.EMOJI));
+    const mode = opts.tryb || (t.PANEL_STYLE === 'lista' ? 'lista' : 'przyciski');
+    const defaultDesc = mode === 'lista'
+      ? 'Potrzebujesz pomocy? Wybierz kategorię z listy poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.'
+      : 'Potrzebujesz pomocy? Kliknij przycisk poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.';
     const sent = await postMessage(opts.kanal || chId, {
-      embeds: [{
-        title: opts.tytul || '🎫 Centrum pomocy',
-        description: opts.opis || 'Potrzebujesz pomocy? Kliknij przycisk poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.',
-        color: COLORS.blue
-      }],
-      components: [row(...buttons)]
+      embeds: [{ title: opts.tytul || '🎫 Centrum pomocy', description: opts.opis || defaultDesc, color: COLORS.blue }],
+      components: buildPanelComponents(t, mode, opts.placeholder)
     });
-    return done(sent ? `✅ Panel ticketów wysłany na <#${opts.kanal || chId}>.` : '❌ Nie udało się wysłać panelu. Sprawdź uprawnienia bota na tym kanale.');
+    return done(sent
+      ? `✅ Panel ticketów (${mode === 'lista' ? 'lista rozwijana' : 'przyciski'}) wysłany na <#${opts.kanal || chId}>.`
+      : '❌ Nie udało się wysłać panelu. Sprawdź uprawnienia bota na tym kanale oraz czy konfiguracja `TYPES` jest poprawna.');
   }
 
   // Pozostałe komendy działają tylko w kanale ticketu
@@ -371,7 +418,7 @@ async function handleModal(interaction, guildConfig, t, res) {
   deferEphemeral(res);
 
   const typeId = id.slice('tkt_modal_'.length);
-  const type = getTypes(t).find(x => x.ID === typeId);
+  const type = getTypes(t).find(x => String(x.ID) === typeId);
   if (!type) return editOriginal(interaction, { content: '❌ Nieznany typ ticketu.' });
 
   const fields = {};
@@ -390,19 +437,28 @@ async function handleButton(interaction, guildConfig, t, res) {
   const chId = interaction.channel_id;
   const staff = isStaff(interaction, guildConfig, t);
 
-  // Otwarcie ticketu → formularz
+  // Otwarcie ticketu z LISTY → formularz
+  if (id === 'tkt_select') {
+    const typeId = interaction.data.values?.[0];
+    const type = getTypes(t).find(x => String(x.ID) === typeId);
+    if (!type) return reply(res, '❌ Nieznana kategoria ticketu.');
+    res.json(ticketModal(type));
+
+    // Zresetuj menu na panelu (Discord inaczej zostawia zaznaczoną opcję i nie da się jej wybrać ponownie)
+    const msg = interaction.message;
+    if (msg?.id) {
+      const placeholder = msg.components?.[0]?.components?.[0]?.placeholder;
+      discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, 'lista', placeholder) });
+    }
+    return;
+  }
+
+  // Otwarcie ticketu z PRZYCISKU → formularz
   if (id.startsWith('tkt_open_')) {
     const typeId = id.slice('tkt_open_'.length);
-    const type = getTypes(t).find(x => x.ID === typeId);
+    const type = getTypes(t).find(x => String(x.ID) === typeId);
     if (!type) return reply(res, '❌ Nieznany typ ticketu.');
-    return res.json({
-      type: 9,
-      data: {
-        custom_id: `tkt_modal_${typeId}`,
-        title: `Nowy ticket — ${type.LABEL}`.slice(0, 45),
-        components: [textInput('temat', 'Temat', 1, 100), textInput('opis', 'Opisz swoją sprawę', 2, 1000)]
-      }
-    });
+    return res.json(ticketModal(type));
   }
 
   switch (id) {
