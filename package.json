@@ -1,14 +1,15 @@
 {
   "name": "frakcyjny-bot",
   "version": "1.0.0",
-  "description": "Bot Discord do zarządzania frakcją (awanse, urlopy, nagany, szkolenia itd.)",
+  "description": "Bot Discord do zarządzania frakcją (awanse, urlopy, nagany, szkolenia, tickety itd.)",
   "type": "module",
   "main": "index.js",
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "register-tickets": "node register-ticket-commands.js"
   },
   "dependencies": {
     "discord-interactions": "^4.1.0",
