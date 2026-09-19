@@ -23,7 +23,12 @@ const commands = [
     options: [
       { type: 3, name: 'tytul', description: 'Tytuł panelu', required: false },
       { type: 3, name: 'opis', description: 'Opis panelu', required: false },
-      { type: 7, name: 'kanal', description: 'Kanał docelowy panelu (domyślnie obecny)', required: false, channel_types: [0] }
+      { type: 7, name: 'kanal', description: 'Kanał docelowy panelu (domyślnie obecny)', required: false, channel_types: [0] },
+      {
+        type: 3, name: 'tryb', description: 'Wygląd panelu: przyciski albo lista rozwijana', required: false,
+        choices: [{ name: 'Przyciski', value: 'przyciski' }, { name: 'Lista rozwijana', value: 'lista' }]
+      },
+      { type: 3, name: 'placeholder', description: 'Tekst na liście rozwijanej (np. Wybierz szkolenie)', required: false, max_length: 100 }
     ]
   },
   {
