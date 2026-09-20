@@ -28,3 +28,4 @@ Uprawnienia bota: Zarządzanie kanałami, Zarządzanie rolami, Wyświetlanie kan
 Osadzanie linków, Załączanie plików, Czytanie historii wiadomości. Wymagany Node.js 18+.
 
 Stan ticketu jest trzymany w temacie kanału (`ticket|ownerId|typ|open/closed`), więc nie potrzeba bazy danych.
+ichuj
