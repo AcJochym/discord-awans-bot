@@ -103,7 +103,17 @@ const ticketControls = () => row(btn('Zamknij', 4, 'tkt_close', '🔒'), btn('Pr
 const closedControls = () => row(btn('Otwórz ponownie', 3, 'tkt_reopen', '🔓'), btn('Transkrypt', 2, 'tkt_transcript', '📄'), btn('Usuń', 4, 'tkt_delete', '🗑️'));
 const confirmRow = (yes, no) => row(btn('Tak', 4, yes), btn('Anuluj', 2, no));
 
-const textInput = (custom_id, label, style, max_length) => row({ type: 4, custom_id, label, style, required: true, max_length });
+// Pole formularza z definicji { ID, LABEL, PLACEHOLDER, STYLE, REQUIRED, MIN_LENGTH, MAX_LENGTH }
+const textInput = (f) => row({
+  type: 4,
+  custom_id: String(f.ID).slice(0, 100),
+  label: String(f.LABEL).slice(0, 45),
+  style: f.STYLE === 'paragraph' || f.STYLE === 2 ? 2 : 1,
+  required: f.REQUIRED !== false,
+  min_length: f.MIN_LENGTH || undefined,
+  max_length: Math.min(f.MAX_LENGTH || 1000, 4000),
+  ...(f.PLACEHOLDER ? { placeholder: String(f.PLACEHOLDER).slice(0, 100) } : {})
+});
 
 // ───────────────────────── Pomocnicze ─────────────────────────
 
@@ -136,13 +146,31 @@ function buildPanelComponents(t, mode, placeholder) {
   return rows;
 }
 
+// Domyślne pola formularza. Można je zmienić w konfiguracji (TICKETS.FIELDS lub FIELDS w danej kategorii).
+const DEFAULT_FIELDS_LIST = [
+  { ID: 'odznaka', LABEL: 'Numer odznaki', PLACEHOLDER: '[XXX]', MAX_LENGTH: 20 },
+  { ID: 'imie_nazwisko', LABEL: 'Imię Nazwisko', PLACEHOLDER: 'Imie Nazwisko', MAX_LENGTH: 80 },
+  { ID: 'stopien', LABEL: 'Stopień', PLACEHOLDER: 'np. Police Officer III', MAX_LENGTH: 80 }
+];
+const DEFAULT_FIELDS_BUTTON = [
+  { ID: 'temat', LABEL: 'Temat', MAX_LENGTH: 100 },
+  { ID: 'opis', LABEL: 'Opisz swoją sprawę', STYLE: 'paragraph', MAX_LENGTH: 1000 }
+];
+
+// mode: 'l' = otwarte z listy, 'b' = otwarte przyciskiem. Discord pozwala na max 5 pól w formularzu.
+function getFields(t, type, mode) {
+  const custom = type.FIELDS?.length ? type.FIELDS : t.FIELDS;
+  const list = custom?.length ? custom : (mode === 'l' ? DEFAULT_FIELDS_LIST : DEFAULT_FIELDS_BUTTON);
+  return list.slice(0, 5);
+}
+
 // Formularz otwarcia ticketu (wspólny dla przycisku i listy)
-const ticketModal = (type) => ({
+const ticketModal = (t, type, mode) => ({
   type: 9,
   data: {
-    custom_id: `tkt_modal_${type.ID}`,
+    custom_id: `tkt_modal_${mode}_${type.ID}`,
     title: `Nowy ticket — ${type.LABEL}`.slice(0, 45),
-    components: [textInput('temat', 'Temat', 1, 100), textInput('opis', 'Opisz swoją sprawę', 2, 1000)]
+    components: getFields(t, type, mode).map(textInput)
   }
 });
 
@@ -206,7 +234,7 @@ h1{font-size:20px}.msg{padding:8px 0;border-bottom:1px solid #3f4147}
 
 // ───────────────────────── Akcje na ticketach ─────────────────────────
 
-async function createTicket(interaction, guildConfig, t, type, fields) {
+async function createTicket(interaction, guildConfig, t, type, answers) {
   const guildId = interaction.guild_id;
   const user = interaction.member.user;
 
@@ -246,7 +274,7 @@ async function createTicket(interaction, guildConfig, t, type, fields) {
       title: `${type.EMOJI || '🎫'} Ticket — ${type.LABEL}`,
       color: COLORS.blue,
       description: t.WELCOME_MESSAGE || 'Dziękujemy za kontakt! Ktoś z administracji wkrótce się z Tobą skontaktuje. W międzyczasie opisz dokładnie swoją sprawę.',
-      fields: [{ name: 'Temat', value: fields.temat || '—' }, { name: 'Opis', value: fields.opis || '—' }],
+      fields: answers,
       footer: { text: `Ticket użytkownika ${user.username}` },
       timestamp: new Date().toISOString()
     }],
@@ -255,7 +283,7 @@ async function createTicket(interaction, guildConfig, t, type, fields) {
 
   await logEvent(t, {
     title: '🎫 Ticket otwarty', color: COLORS.green,
-    description: `**Kanał:** <#${channel.id}>\n**Użytkownik:** <@${user.id}>\n**Typ:** ${type.LABEL}\n**Temat:** ${fields.temat || '—'}`
+    description: `**Kanał:** <#${channel.id}>\n**Użytkownik:** <@${user.id}>\n**Typ:** ${type.LABEL}\n` + answers.map(a => `**${a.name}:** ${a.value}`).join('\n')
   });
 
   return { channel };
@@ -417,14 +445,23 @@ async function handleModal(interaction, guildConfig, t, res) {
 
   deferEphemeral(res);
 
-  const typeId = id.slice('tkt_modal_'.length);
+  // custom_id: tkt_modal_<tryb>_<ID kategorii>, gdzie tryb: l = lista, b = przycisk
+  const rest = id.slice('tkt_modal_'.length);
+  const hasMode = (rest[0] === 'l' || rest[0] === 'b') && rest[1] === '_';
+  const mode = hasMode ? rest[0] : 'b';
+  const typeId = hasMode ? rest.slice(2) : rest;
   const type = getTypes(t).find(x => String(x.ID) === typeId);
   if (!type) return editOriginal(interaction, { content: '❌ Nieznany typ ticketu.' });
 
-  const fields = {};
-  for (const r of interaction.data.components || []) for (const c of r.components || []) fields[c.custom_id] = c.value;
+  const values = {};
+  for (const r of interaction.data.components || []) for (const c of r.components || []) values[c.custom_id] = c.value;
 
-  const result = await createTicket(interaction, guildConfig, t, type, fields);
+  const answers = getFields(t, type, mode).map(f => ({
+    name: String(f.LABEL).slice(0, 256),
+    value: String(values[f.ID] || '—').slice(0, 1024)
+  }));
+
+  const result = await createTicket(interaction, guildConfig, t, type, answers);
   if (result.error) return editOriginal(interaction, { content: result.error });
   return editOriginal(interaction, { content: `✅ Twój ticket został utworzony: <#${result.channel.id}>` });
 }
@@ -442,7 +479,7 @@ async function handleButton(interaction, guildConfig, t, res) {
     const typeId = interaction.data.values?.[0];
     const type = getTypes(t).find(x => String(x.ID) === typeId);
     if (!type) return reply(res, '❌ Nieznana kategoria ticketu.');
-    res.json(ticketModal(type));
+    res.json(ticketModal(t, type, 'l'));
 
     // Zresetuj menu na panelu (Discord inaczej zostawia zaznaczoną opcję i nie da się jej wybrać ponownie)
     const msg = interaction.message;
@@ -458,7 +495,7 @@ async function handleButton(interaction, guildConfig, t, res) {
     const typeId = id.slice('tkt_open_'.length);
     const type = getTypes(t).find(x => String(x.ID) === typeId);
     if (!type) return reply(res, '❌ Nieznany typ ticketu.');
-    return res.json(ticketModal(type));
+    return res.json(ticketModal(t, type, 'b'));
   }
 
   switch (id) {
