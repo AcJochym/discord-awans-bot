@@ -16,7 +16,6 @@ const COLORS = { blue: 3447003, green: 5763719, red: 15158332, orange: 16753920,
 
 const CLAIM_FIELD = '✋ Obsługuje';
 const CLOSED_TITLE = '🔒 Ticket zamknięty';
-const INACTIVE_MARK = '⏰ Automatyczne przypomnienie';
 
 // ───────────────────────── REST ─────────────────────────
 
@@ -90,14 +89,6 @@ async function sendFile(channelId, payload, filename, fileText) {
 async function openDM(userId) {
   const ch = await discord('POST', '/users/@me/channels', { recipient_id: userId });
   return ch?.id || null;
-}
-
-let cachedBotId = null;
-async function getBotId() {
-  if (cachedBotId) return cachedBotId;
-  const me = await discord('GET', '/users/@me');
-  cachedBotId = me?.id || null;
-  return cachedBotId;
 }
 
 const guildNames = new Map();
@@ -180,11 +171,14 @@ const DEFAULT_FIELDS_BUTTON = [
   { ID: 'opis', LABEL: 'Opisz swoją sprawę', STYLE: 'paragraph', MAX_LENGTH: 1000 }
 ];
 
-// mode: 'l' = otwarte z listy, 'b' = otwarte przyciskiem. Discord pozwala na max 5 pól w formularzu.
+// mode: 'l' = tryb FTD (lista rozwijana), 'b' = tryb Command (przyciski). Discord pozwala na max 5 pól w formularzu.
+// W trybie FTD każda pozycja z listy pokazuje ten sam formularz (Numer odznaki / Imię Nazwisko / Stopień),
+// niezależnie od tego, co ma ustawione dana kategoria w TYPES[].FIELDS — to celowe, żeby lista była jednolita.
+// W trybie Command każdy przycisk może mieć własne pola (TYPES[].FIELDS ma pierwszeństwo).
 function getFields(t, type, mode) {
+  if (mode === 'l') return (t.FIELDS?.length ? t.FIELDS : DEFAULT_FIELDS_LIST).slice(0, 5);
   const custom = type.FIELDS?.length ? type.FIELDS : t.FIELDS;
-  const list = custom?.length ? custom : (mode === 'l' ? DEFAULT_FIELDS_LIST : DEFAULT_FIELDS_BUTTON);
-  return list.slice(0, 5);
+  return (custom?.length ? custom : DEFAULT_FIELDS_BUTTON).slice(0, 5);
 }
 
 // ───────────────────────── Uprawnienia ─────────────────────────
@@ -416,10 +410,10 @@ async function makeTranscript(ctx, ticket, type, messages) {
 
 // ───────────────────────── Panel ─────────────────────────
 
-// Komponenty panelu: 'przyciski' (do 25, po 5 w rzędzie) albo 'lista' (rozwijane menu, do 25 opcji)
+// Komponenty panelu: 'command' (przyciski, do 25, po 5 w rzędzie) albo 'ftd' (rozwijane menu, do 25 opcji)
 function buildPanelComponents(t, mode, placeholder) {
   const types = getTypes(t);
-  if (mode === 'lista') {
+  if (mode === 'ftd') {
     return [row({
       type: 3,
       custom_id: 'tkt_select',
@@ -681,9 +675,9 @@ async function handleCommand(interaction, guildConfig, t, res) {
 
   if (name === 'ticket_panel') {
     if (!isAdmin(interaction, guildConfig)) return done('❌ Brak uprawnień.');
-    const mode = opts.tryb || (t.PANEL_STYLE === 'lista' ? 'lista' : 'przyciski');
+    const mode = opts.tryb || (t.PANEL_STYLE === 'ftd' ? 'ftd' : 'command');
     const P = t.PANEL || {};
-    const defaultDesc = mode === 'lista'
+    const defaultDesc = mode === 'ftd'
       ? 'Potrzebujesz pomocy? Wybierz kategorię z listy poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.'
       : 'Potrzebujesz pomocy? Kliknij przycisk poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.';
     const sent = await postMessage(opts.kanal || chId, {
@@ -698,7 +692,7 @@ async function handleCommand(interaction, guildConfig, t, res) {
       components: buildPanelComponents(t, mode, opts.placeholder)
     });
     return done(sent
-      ? `✅ Panel ticketów (${mode === 'lista' ? 'lista rozwijana' : 'przyciski'}) wysłany na <#${opts.kanal || chId}>.`
+      ? `✅ Panel ticketów (${mode === 'ftd' ? 'FTD — lista rozwijana' : 'Command — przyciski'}) wysłany na <#${opts.kanal || chId}>.`
       : '❌ Nie udało się wysłać panelu. Sprawdź uprawnienia bota na tym kanale oraz czy konfiguracja `TYPES` jest poprawna.');
   }
 
@@ -806,7 +800,7 @@ async function handleButton(interaction, guildConfig, t, res) {
     const msg = interaction.message;
     if (isSelect && msg?.id) {
       const placeholder = msg.components?.[0]?.components?.[0]?.placeholder;
-      discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, 'lista', placeholder) });
+      discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, 'ftd', placeholder) });
     }
     return;
   }
@@ -919,81 +913,4 @@ export async function handleTicketInteraction(interaction, guildConfig, res) {
     else editOriginal(interaction, { content: '❌ Wystąpił błąd systemu ticketów.', components: [] });
   }
   return true;
-}
-
-// ───────────────────────── Automatyczne porządki ─────────────────────────
-// AUTO_CLOSE_HOURS            — zamyka ticket po tylu godzinach bez wiadomości (najpierw wysyła przypomnienie)
-// AUTO_WARN_BEFORE_HOURS      — ile godzin przed zamknięciem wysłać przypomnienie (domyślnie 24, 0 = bez przypomnienia)
-// AUTO_DELETE_CLOSED_HOURS    — usuwa zamknięty ticket po tylu godzinach
-
-export async function runTicketMaintenance(guildId, guildConfig) {
-  const t = guildConfig.TICKETS;
-  const appId = await getBotId();
-  if (!appId) return;
-  const channels = await discord('GET', `/guilds/${guildId}/channels`);
-  if (!channels) return;
-
-  const HOUR = 3600 * 1000;
-  const closeMs = (t.AUTO_CLOSE_HOURS || 0) * HOUR;
-  const warnBeforeMs = closeMs ? Math.min((t.AUTO_WARN_BEFORE_HOURS ?? 24) * HOUR, closeMs / 2) : 0;
-  const deleteMs = (t.AUTO_DELETE_CLOSED_HOURS || 0) * HOUR;
-  const ctx = { appId, guildId, actorId: null };
-  const now = Date.now();
-
-  for (const c of channels) {
-    const ticket = parseTicketChannel(c);
-    if (!ticket) continue;
-    const type = ticketType(t, ticket);
-    const idleMs = now - snowflakeToMs(c.last_message_id || c.id);
-
-    if (ticket.state === 'open' && closeMs) {
-      if (!warnBeforeMs) {
-        if (idleMs >= closeMs) await closeTicket(ctx, t, type, ticket, 'Automatyczne zamknięcie z powodu braku aktywności.');
-        continue;
-      }
-      // Ostatnią wiadomość sprawdzamy dopiero po czasie ostrzeżenia — wcześniej ticket na pewno jest aktywny
-      if (idleMs < warnBeforeMs) continue;
-
-      const last = (await discord('GET', `/channels/${c.id}/messages?limit=1`))?.[0];
-      const isWarning = last?.author?.id === appId && last.embeds?.[0]?.footer?.text === INACTIVE_MARK;
-      if (isWarning) {
-        // Przypomnienie już wysłano: zamykamy, gdy od niego minęło AUTO_WARN_BEFORE_HOURS bez odpowiedzi
-        await closeTicket(ctx, t, type, ticket, 'Automatyczne zamknięcie z powodu braku aktywności.');
-      } else if (idleMs >= closeMs - warnBeforeMs) {
-        const closeAt = Math.floor((now + warnBeforeMs) / 1000);
-        await postMessage(c.id, {
-          content: `<@${ticket.ownerId}>`,
-          allowed_mentions: { users: [ticket.ownerId] },
-          embeds: [{
-            title: '⏰ Ticket jest nieaktywny', color: COLORS.orange,
-            description: `Nikt nie pisał tu od dłuższego czasu. Jeśli sprawa jest nadal aktualna, odpisz w tym kanale. W przeciwnym razie ticket zostanie automatycznie zamknięty <t:${closeAt}:R>.`,
-            footer: { text: INACTIVE_MARK }
-          }]
-        });
-      }
-    } else if (ticket.state === 'closed' && deleteMs && idleMs >= deleteMs) {
-      await deleteTicket(ctx, t, type, ticket);
-    }
-  }
-}
-
-export function startTicketMaintenance(serverConfigs) {
-  const guilds = Object.entries(serverConfigs || {}).filter(([, c]) => c.TICKETS && (c.TICKETS.AUTO_CLOSE_HOURS || c.TICKETS.AUTO_DELETE_CLOSED_HOURS));
-  if (!guilds.length) return;
-
-  let running = false;
-  const tick = async () => {
-    if (running) return;
-    running = true;
-    try {
-      for (const [guildId, cfg] of guilds) {
-        try { await runTicketMaintenance(guildId, cfg); } catch (e) { console.error(`[tickets] Porządki na serwerze ${guildId}:`, e); }
-      }
-    } finally {
-      running = false;
-    }
-  };
-  setTimeout(tick, 60 * 1000);
-  setInterval(tick, 15 * 60 * 1000);
-  console.log(`🧹 Automatyczne porządki ticketów włączone dla ${guilds.length} serwer(ów).`);
 }
