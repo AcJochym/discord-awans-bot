@@ -1,7 +1,7 @@
 import express from 'express';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import fetch from 'node-fetch';
-import { handleTicketInteraction, startTicketMaintenance } from './tickets.js';
+import { handleTicketInteraction } from './tickets.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -837,5 +837,4 @@ const SERVER_PORT = process.env.PORT || 8080;
 app.listen(SERVER_PORT, '0.0.0.0', () => {
   console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
   announceUpdateToAllServers();
-  startTicketMaintenance(serverConfigs);
 });
