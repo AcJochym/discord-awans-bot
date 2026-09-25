@@ -147,11 +147,32 @@ const textInput = (f) => row({
 // Wartość z kategorii (TYPES[]) z awaryjnym przejściem na ustawienie globalne (TICKETS)
 const pick = (t, type, key) => (type && type[key] != null ? type[key] : t[key]);
 
-function getTypes(t) {
-  const list = t.TYPES && t.TYPES.length ? t.TYPES : [{ ID: 'ogolny', LABEL: 'Otwórz ticket', EMOJI: '🎫' }];
+const DEFAULT_TYPE = { ID: 'ogolny', LABEL: 'Otwórz ticket', EMOJI: '🎫' };
+
+// Sekcja configu danego panelu: TICKETS.COMMAND albo TICKETS.FTD. Gdy jej nie ma,
+// panel korzysta ze wspólnych, "starych" ustawień na poziomie TICKETS (wsteczna zgodność).
+const panelSection = (t, mode) => (mode === 'ftd' ? t.FTD : t.COMMAND) || {};
+
+// Lista kategorii WIDOCZNYCH na danym panelu (do 25). Command i FTD mają osobne listy —
+// jeśli dany panel nie ma własnej sekcji TYPES, korzysta ze wspólnej TICKETS.TYPES.
+function getPanelTypes(t, mode) {
+  const own = panelSection(t, mode).TYPES;
+  const list = own?.length ? own : (t.TYPES?.length ? t.TYPES : [DEFAULT_TYPE]);
   return list.slice(0, 25);
 }
-const findType = (t, id) => getTypes(t).find(x => String(x.ID) === String(id));
+
+// Wszystkie kategorie ze WSZYSTKICH paneli (Command + FTD + stare wspólne TYPES) — używane
+// do odnalezienia definicji kategorii dla już istniejącego ticketu, niezależnie z jakiego
+// panelu został otwarty. ID kategorii powinny być unikalne w całej konfiguracji.
+function allTypes(t) {
+  const seen = new Map();
+  for (const list of [t.COMMAND?.TYPES, t.FTD?.TYPES, t.TYPES]) {
+    for (const ty of list || []) if (!seen.has(String(ty.ID))) seen.set(String(ty.ID), ty);
+  }
+  if (!seen.size) seen.set(DEFAULT_TYPE.ID, DEFAULT_TYPE);
+  return [...seen.values()];
+}
+const findType = (t, id) => allTypes(t).find(x => String(x.ID) === String(id));
 const ticketType = (t, ticket) => findType(t, ticket.typeId) || { ID: ticket.typeId, LABEL: ticket.typeId };
 
 function parseColor(c) {
@@ -160,7 +181,8 @@ function parseColor(c) {
   return undefined;
 }
 
-// Domyślne pola formularza (można zmienić w TICKETS.FIELDS lub FIELDS w danej kategorii)
+// Domyślne pola formularza (można zmienić w TICKETS.FTD.FIELDS / TICKETS.COMMAND.FIELDS,
+// w kategorii TYPES[].FIELDS — tylko dla Command — albo we wspólnym TICKETS.FIELDS)
 const DEFAULT_FIELDS_LIST = [
   { ID: 'odznaka', LABEL: 'Numer odznaki', PLACEHOLDER: '[XXX]', MAX_LENGTH: 20 },
   { ID: 'imie_nazwisko', LABEL: 'Imię Nazwisko', PLACEHOLDER: 'Imie Nazwisko', MAX_LENGTH: 80 },
@@ -172,12 +194,17 @@ const DEFAULT_FIELDS_BUTTON = [
 ];
 
 // mode: 'l' = tryb FTD (lista rozwijana), 'b' = tryb Command (przyciski). Discord pozwala na max 5 pól w formularzu.
-// W trybie FTD każda pozycja z listy pokazuje ten sam formularz (Numer odznaki / Imię Nazwisko / Stopień),
-// niezależnie od tego, co ma ustawione dana kategoria w TYPES[].FIELDS — to celowe, żeby lista była jednolita.
-// W trybie Command każdy przycisk może mieć własne pola (TYPES[].FIELDS ma pierwszeństwo).
+// W trybie FTD każda pozycja z listy pokazuje TEN SAM formularz — ustawiany globalnie dla panelu
+// (TICKETS.FTD.FIELDS, awaryjnie TICKETS.FIELDS), a nie osobno dla każdej kategorii.
+// W trybie Command każdy przycisk może mieć własne pola (TYPES[].FIELDS ma pierwszeństwo
+// przed TICKETS.COMMAND.FIELDS, a to przed wspólnym TICKETS.FIELDS).
 function getFields(t, type, mode) {
-  if (mode === 'l') return (t.FIELDS?.length ? t.FIELDS : DEFAULT_FIELDS_LIST).slice(0, 5);
-  const custom = type.FIELDS?.length ? type.FIELDS : t.FIELDS;
+  if (mode === 'l') {
+    const ftd = t.FTD?.FIELDS?.length ? t.FTD.FIELDS : t.FIELDS;
+    return (ftd?.length ? ftd : DEFAULT_FIELDS_LIST).slice(0, 5);
+  }
+  const cmd = t.COMMAND?.FIELDS?.length ? t.COMMAND.FIELDS : t.FIELDS;
+  const custom = type.FIELDS?.length ? type.FIELDS : cmd;
   return (custom?.length ? custom : DEFAULT_FIELDS_BUTTON).slice(0, 5);
 }
 
@@ -412,12 +439,12 @@ async function makeTranscript(ctx, ticket, type, messages) {
 
 // Komponenty panelu: 'command' (przyciski, do 25, po 5 w rzędzie) albo 'ftd' (rozwijane menu, do 25 opcji)
 function buildPanelComponents(t, mode, placeholder) {
-  const types = getTypes(t);
+  const types = getPanelTypes(t, mode);
   if (mode === 'ftd') {
     return [row({
       type: 3,
       custom_id: 'tkt_select',
-      placeholder: String(placeholder || t.PLACEHOLDER || 'Wybierz kategorię...').slice(0, 150),
+      placeholder: String(placeholder || t.FTD?.PLACEHOLDER || t.PLACEHOLDER || 'Wybierz kategorię...').slice(0, 150),
       min_values: 1,
       max_values: 1,
       options: types.map(ty => {
@@ -676,7 +703,7 @@ async function handleCommand(interaction, guildConfig, t, res) {
   if (name === 'ticket_panel') {
     if (!isAdmin(interaction, guildConfig)) return done('❌ Brak uprawnień.');
     const mode = opts.tryb || (t.PANEL_STYLE === 'ftd' ? 'ftd' : 'command');
-    const P = t.PANEL || {};
+    const P = panelSection(t, mode).PANEL || t.PANEL || {};
     const defaultDesc = mode === 'ftd'
       ? 'Potrzebujesz pomocy? Wybierz kategorię z listy poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.'
       : 'Potrzebujesz pomocy? Kliknij przycisk poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.';
