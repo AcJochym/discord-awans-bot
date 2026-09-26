@@ -309,6 +309,15 @@ app.get('/', (_req, res) => res.status(200).send('Law Enforcement bot is online.
 
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
   const interaction = req.body;
+  const interactionStartedAt = Date.now();
+  res.once('finish', () => {
+    console.log(`[interaction-response] type=${interaction.type} custom_id=${interaction.data?.custom_id || '-'} status=${res.statusCode} duration=${Date.now() - interactionStartedAt}ms`);
+  });
+  res.once('close', () => {
+    if (!res.writableEnded) {
+      console.warn(`[interaction-response] connection closed before response ended; type=${interaction.type} custom_id=${interaction.data?.custom_id || '-'}`);
+    }
+  });
   console.log(`[interaction] type=${interaction.type} custom_id=${interaction.data?.custom_id || '-'} name=${interaction.data?.name || '-'}`);
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
