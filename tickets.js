@@ -837,8 +837,10 @@ async function handleButton(interaction, guildConfig, t, res) {
     // Zresetuj menu na panelu (inaczej Discord zostawia zaznaczoną opcję i nie da się jej wybrać ponownie)
     const msg = interaction.message;
     if (isSelect && msg?.id) {
-      const placeholder = msg.components?.[0]?.components?.[0]?.placeholder;
-      discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, mode, placeholder) });
+      setImmediate(() => {
+        const placeholder = msg.components?.[0]?.components?.[0]?.placeholder;
+        discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, mode, placeholder) });
+      });
     }
     return;
   }
