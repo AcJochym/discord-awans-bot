@@ -472,7 +472,7 @@ const ticketModal = (t, type, mode) => ({
   data: {
     custom_id: `tkt_modal_${mode}_${type.ID}`,
     title: `Nowy ticket — ${type.LABEL}`.slice(0, 45),
-    components: getFields(t, type, mode).map(textInput)
+    components: getFields(t, type, mode).map(field => textInput(field))
   }
 });
 
