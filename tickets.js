@@ -845,6 +845,16 @@ async function handleButton(interaction, guildConfig, t, res) {
       res.json(modal);
     }
 
+    const message = interaction.message;
+    if (isSelect && message?.id) {
+      res.once('finish', () => {
+        const placeholder = message.components?.[0]?.components?.[0]?.placeholder;
+        discord('PATCH', `/channels/${chId}/messages/${message.id}`, {
+          components: buildPanelComponents(t, mode, placeholder)
+        });
+      });
+    }
+
     return;
   }
 
