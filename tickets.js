@@ -152,6 +152,8 @@ const DEFAULT_TYPE = { ID: 'ogolny', LABEL: 'Otwórz ticket', EMOJI: '🎫' };
 // Sekcja configu danego panelu: TICKETS.COMMAND albo TICKETS.FTD. Gdy jej nie ma,
 // panel korzysta ze wspólnych, "starych" ustawień na poziomie TICKETS (wsteczna zgodność).
 const panelSection = (t, mode) => (mode === 'ftd' ? t.FTD : t.COMMAND) || {};
+const pickPanel = (t, type, mode, key) =>
+  (type && type[key] != null ? type[key] : panelSection(t, mode)[key] ?? t[key]);
 
 // Lista kategorii WIDOCZNYCH na danym panelu (do 25). Command i FTD mają osobne listy —
 // jeśli dany panel nie ma własnej sekcji TYPES, korzysta ze wspólnej TICKETS.TYPES.
@@ -259,12 +261,13 @@ function buildChannelName(template, vars) {
   return raw.replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'ticket';
 }
 
-const makeTopic = (ownerId, typeId, state, number) => `ticket|${ownerId}|${typeId}|${state}|${number}`;
+const makeTopic = (ownerId, typeId, state, number, panelMode) =>
+  `ticket|${ownerId}|${typeId}|${state}|${number}${panelMode ? `|${panelMode}` : ''}`;
 
 function parseTicketChannel(channel) {
   if (!channel?.topic?.startsWith('ticket|')) return null;
-  const [, ownerId, typeId, state, number] = channel.topic.split('|');
-  return { channel, ownerId, typeId, state: state || 'open', number: parseInt(number, 10) || 0 };
+  const [, ownerId, typeId, state, number, panelMode] = channel.topic.split('|');
+  return { channel, ownerId, typeId, state: state || 'open', number: parseInt(number, 10) || 0, panelMode };
 }
 
 async function getTicket(channelId) {
@@ -487,12 +490,13 @@ function createTicket(interaction, guildConfig, t, type, mode, answers, values) 
 async function createTicketLocked(interaction, guildConfig, t, type, mode, answers, values) {
   const guildId = interaction.guild_id;
   const user = interaction.member.user;
+  const panelMode = mode === 'l' ? 'ftd' : 'command';
 
   const denied = checkAccess(interaction, guildConfig, t, type);
   if (denied) return { error: denied };
 
-  const categoryId = pick(t, type, 'CATEGORY_ID');
-  if (!categoryId) return { error: '❌ Brak `CATEGORY_ID` w konfiguracji ticketów (ustaw globalnie w `TICKETS` albo w danej kategorii).' };
+  const categoryId = pickPanel(t, type, panelMode, 'CATEGORY_ID');
+  if (!categoryId) return { error: `❌ Brak CATEGORY_ID w konfiguracji ticketów (ustaw w TICKETS.${panelMode.toUpperCase()}, globalnie w TICKETS albo w danej kategorii).` };
 
   const channels = await discord('GET', `/guilds/${guildId}/channels`);
   if (!channels) return { error: '❌ Nie udało się pobrać listy kanałów. Sprawdź uprawnienia bota.' };
@@ -525,7 +529,7 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
 
   const created = await discordRaw('POST', `/guilds/${guildId}/channels`, {
     name, type: 0, parent_id: categoryId,
-    topic: makeTopic(user.id, type.ID, 'open', number),
+    topic: makeTopic(user.id, type.ID, 'open', number, panelMode),
     permission_overwrites: overwrites
   });
   if (!created.ok) {
@@ -578,7 +582,7 @@ async function closeTicket(ctx, t, type, ticket, reason) {
     await discord('PUT', `/channels/${ch.id}/permissions/${o.id}`, { type: 1, allow: '0', deny: String(PERM.VIEW) });
   }
 
-  const patch = { topic: makeTopic(ticket.ownerId, ticket.typeId, 'closed', ticket.number) };
+  const patch = { topic: makeTopic(ticket.ownerId, ticket.typeId, 'closed', ticket.number, ticket.panelMode) };
   const closedCategory = pick(t, type, 'CLOSED_CATEGORY_ID');
   if (closedCategory) patch.parent_id = closedCategory;
   if (!(await discord('PATCH', `/channels/${ch.id}`, patch))) return false;
@@ -637,8 +641,10 @@ async function reopenTicket(ctx, t, type, ticket) {
     await discord('PUT', `/channels/${ch.id}/permissions/${o.id}`, { type: 1, allow: String(MEMBER_ALLOW), deny: '0' });
   }
 
-  const patch = { topic: makeTopic(ticket.ownerId, ticket.typeId, 'open', ticket.number) };
-  const category = pick(t, type, 'CATEGORY_ID');
+  const patch = { topic: makeTopic(ticket.ownerId, ticket.typeId, 'open', ticket.number, ticket.panelMode) };
+  const category = ticket.panelMode
+    ? pickPanel(t, type, ticket.panelMode, 'CATEGORY_ID')
+    : pick(t, type, 'CATEGORY_ID');
   if (category) patch.parent_id = category;
   if (!(await discord('PATCH', `/channels/${ch.id}`, patch))) return false;
 
