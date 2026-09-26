@@ -307,6 +307,7 @@ function parseStrictDate(value) {
 
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
   const interaction = req.body;
+  console.log(`[interaction] type=${interaction.type} custom_id=${interaction.data?.custom_id || '-'} name=${interaction.data?.name || '-'}`);
   if (interaction.type === InteractionType.PING) return res.json({ type: InteractionResponseType.PONG });
 
   const guildConfig = serverConfigs[interaction.guild_id];
