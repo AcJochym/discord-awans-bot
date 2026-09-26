@@ -319,10 +319,10 @@ const logFooter = (ticket, type) => ({ text: `Ticket #${pad(ticket.number)} • 
 
 // ───────────────────────── Transkrypt ─────────────────────────
 
-async function fetchAllMessages(channelId, limit = 2000) {
+async function fetchAllMessages(channelId) {
   const all = [];
   let before;
-  while (all.length < limit) {
+  while (true) {
     const batch = await discord('GET', `/channels/${channelId}/messages?limit=100${before ? `&before=${before}` : ''}`);
     if (!batch || batch.length === 0) break;
     all.push(...batch);
@@ -614,18 +614,16 @@ async function closeTicket(ctx, t, type, ticket, reason) {
     footer: logFooter(ticket, type)
   }, sendFileToLog ? transcript : null);
 
-  if (t.DM_ON_CLOSE !== false) {
-    const dm = await openDM(ticket.ownerId);
-    if (dm) {
-      const guildName = await getGuildName(ctx.guildId);
-      const embed = {
-        title: '🔒 Twój ticket został zamknięty', color: COLORS.red,
-        description: `**Ticket:** #${ch.name} (${type.LABEL})\n**Zamknął:** ${actor}\n**Powód:** ${reason || '—'}`,
-        footer: { text: guildName }, timestamp: new Date().toISOString()
-      };
-      if (!(t.DM_TRANSCRIPT && (await sendFile(dm, { embeds: [embed] }, transcript.name, transcript.html)))) {
-        await postMessage(dm, { embeds: [embed] });
-      }
+  const dm = await openDM(ticket.ownerId);
+  if (dm) {
+    const guildName = await getGuildName(ctx.guildId);
+    const embed = {
+      title: '🔒 Twój ticket został zamknięty', color: COLORS.red,
+      description: `**Ticket:** #${ch.name} (${type.LABEL})\n**Zamknął:** ${actor}\n**Powód:** ${reason || '—'}`,
+      footer: { text: guildName }, timestamp: new Date().toISOString()
+    };
+    if (!(await sendFile(dm, { embeds: [embed] }, transcript.name, transcript.html))) {
+      await postMessage(dm, { embeds: [embed] });
     }
   }
   return true;
