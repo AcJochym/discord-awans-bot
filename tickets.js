@@ -240,7 +240,7 @@ function checkAccess(interaction, guildConfig, t, type) {
 const pad = (n) => String(n || 0).padStart(4, '0');
 
 const slug = (s, fallback = 'ticket') => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l')
-  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || fallback;
+  .replace(/[^a-z0-9_]+/g, '-').replace(/^[-_]+|[-_]+$/g, '').slice(0, 30) || fallback;
 
 function snowflakeToMs(id) {
   try { return Number((BigInt(id) >> 22n) + 1420070400000n); } catch { return Date.now(); }
@@ -519,9 +519,13 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
   }
 
   const number = await nextTicketNumber(t, channels);
-  const support = pick(t, type, 'SUPPORT_ROLE_IDS') || [];
+  const support = type.SUPPORT_ROLE_IDS || [];
 
-  const name = buildChannelName(pick(t, type, 'CHANNEL_NAME') || '{type}-{number}', {
+  // Domyślna nazwa: ID kategorii + numer odznaki z formularza (np. "raport_ftd-123").
+  // Gdy formularz nie ma pola "odznaka" (np. domyślne pola Command bez własnych FIELDS),
+  // ticket wraca do nazwy z numerem ticketu: "{type}-{number}".
+  const defaultChannelName = values.odznaka ? '{type}-{odznaka}' : '{type}-{number}';
+  const name = buildChannelName(pick(t, type, 'CHANNEL_NAME') || defaultChannelName, {
     ...values, type: type.ID, number: pad(number), username: user.username
   });
 
