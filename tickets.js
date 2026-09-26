@@ -15,6 +15,7 @@ const MEMBER_ALLOW = PERM.VIEW | PERM.SEND | PERM.EMBED | PERM.ATTACH | PERM.HIS
 const COLORS = { blue: 3447003, green: 5763719, red: 15158332, orange: 16753920, grey: 9807270 };
 
 const CLAIM_FIELD = '✋ Obsługuje';
+const STATUS_FIELD = '📊 Status';
 const CLOSED_TITLE = '🔒 Ticket zamknięty';
 
 // ───────────────────────── REST ─────────────────────────
@@ -91,6 +92,17 @@ async function openDM(userId) {
   return ch?.id || null;
 }
 
+async function notifyTicketOwner(userId, content) {
+  const dm = await openDM(userId);
+  if (!dm) {
+    console.warn(`[tickets] Nie udało się otworzyć DM do właściciela ${userId}.`);
+    return false;
+  }
+  const sent = await postMessage(dm, { content });
+  if (!sent) console.warn(`[tickets] Nie udało się wysłać DM do właściciela ${userId}.`);
+  return Boolean(sent);
+}
+
 const guildNames = new Map();
 async function getGuildName(guildId) {
   if (guildNames.has(guildId)) return guildNames.get(guildId);
@@ -131,12 +143,12 @@ const confirmRow = (yes, no) => row(btn('Tak', 4, yes), btn('Anuluj', 2, no));
 
 // Pole formularza z definicji { ID, LABEL, PLACEHOLDER, STYLE, REQUIRED, MIN_LENGTH, MAX_LENGTH }
 const isParagraph = (f) => f.STYLE === 'paragraph' || f.STYLE === 2;
-const textInput = (f) => row({
+const textInput = (f, required = true) => row({
   type: 4,
   custom_id: String(f.ID).slice(0, 100),
   label: String(f.LABEL).slice(0, 45),
   style: isParagraph(f) ? 2 : 1,
-  required: true,
+  required,
   min_length: f.MIN_LENGTH || undefined,
   max_length: Math.min(f.MAX_LENGTH || 1000, 4000),
   ...(f.PLACEHOLDER ? { placeholder: String(f.PLACEHOLDER).slice(0, 100) } : {})
@@ -469,7 +481,7 @@ const closeModal = () => ({
   data: {
     custom_id: 'tkt_closemodal',
     title: 'Zamknięcie ticketu',
-    components: [textInput({ ID: 'powod', LABEL: 'Powód zamknięcia (opcjonalnie)', STYLE: 'paragraph', REQUIRED: false, MAX_LENGTH: 500, PLACEHOLDER: 'np. Sprawa rozwiązana' })]
+    components: [textInput({ ID: 'powod', LABEL: 'Powód zamknięcia (opcjonalnie)', STYLE: 'paragraph', MAX_LENGTH: 500, PLACEHOLDER: 'np. Sprawa rozwiązana' }, false)]
   }
 });
 
@@ -551,7 +563,7 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
       description: fillTemplate(pick(t, type, 'WELCOME_MESSAGE') ||
         'Dziękujemy za zgłoszenie, {user}! Zespół {support} zajmie się Twoją sprawą najszybciej, jak to możliwe. Możesz w międzyczasie dopisać dodatkowe informacje lub dodać załączniki.', vars),
       color: parseColor(type.COLOR) ?? COLORS.blue,
-      fields: answers,
+      fields: [...answers, { name: STATUS_FIELD, value: '⏳ Oczekuje na obsługę' }],
       footer: { text: `Ticket #${pad(number)} • ${type.LABEL}` },
       timestamp: new Date().toISOString()
     }],
@@ -561,6 +573,11 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
     await discord('DELETE', `/channels/${channel.id}`);
     return { error: '❌ Ticket został utworzony, ale nie udało się wysłać w nim wiadomości, więc go usunąłem. Sprawdź uprawnienia bota.' };
   }
+
+  await notifyTicketOwner(user.id,
+    `✅ Ticket **${name} - ${type.LABEL}** został utworzony.\nStatus: ⏳ Oczekuje na obsługę.\n` +
+    `Otwórz ticket: https://discord.com/channels/${guildId}/${channel.id}\n` +
+    'Możesz dopisać szczegóły i załączyć pliki bezpośrednio na kanale ticketu.');
 
   await sendLog(t, {
     title: '🎫 Ticket otwarty', color: COLORS.green,
@@ -834,7 +851,11 @@ async function handleButton(interaction, guildConfig, t, res) {
   const isOwner = userId === ticket.ownerId;
   const ctx = makeCtx(interaction);
   const embed = interaction.message?.embeds?.[0];
-  const claimedBy = () => /<@!?(\d+)>/.exec(embed?.fields?.find(f => f.name === CLAIM_FIELD)?.value || '')?.[1];
+  const claimedBy = () => {
+    const status = embed?.fields?.find(f => f.name === STATUS_FIELD)?.value;
+    const legacyClaim = embed?.fields?.find(f => f.name === CLAIM_FIELD)?.value;
+    return /<@!?(\d+)>/.exec(status || legacyClaim || '')?.[1];
+  };
 
   switch (id) {
     case 'tkt_close':
@@ -847,10 +868,16 @@ async function handleButton(interaction, guildConfig, t, res) {
       if (ticket.state !== 'open' || !embed) return reply(res, '❌ Nie można przejąć tego ticketu.');
       if (claimedBy()) return reply(res, `⚠️ Ten ticket jest już przejęty przez <@${claimedBy()}>.`);
       postMessage(chId, { content: `✋ <@${userId}> przejął(a) ten ticket.`, allowed_mentions: { parse: [] } });
+      notifyTicketOwner(ticket.ownerId,
+        `👋 Ticket **${ticket.channel.name}** został przejęty przez <@${userId}>. Obsługa zajmuje się Twoim zgłoszeniem.\n` +
+        `Otwórz ticket: https://discord.com/channels/${interaction.guild_id}/${chId}`)
+        .catch(e => console.error('[tickets] Powiadomienie DM o przejęciu nie powiodło się:', e));
+      const fields = (embed.fields || []).filter(f => f.name !== STATUS_FIELD && f.name !== CLAIM_FIELD);
+      fields.push({ name: STATUS_FIELD, value: `🟢 Przejęty przez <@${userId}>` });
       return res.json({
         type: 7,
         data: {
-          embeds: [{ ...embed, fields: [...(embed.fields || []), { name: CLAIM_FIELD, value: `<@${userId}>` }] }],
+          embeds: [{ ...embed, fields }],
           components: [ticketControls(true)]
         }
       });
@@ -861,10 +888,16 @@ async function handleButton(interaction, guildConfig, t, res) {
       if (!embed || !owner) return reply(res, '⚠️ Ten ticket nie jest przejęty.');
       if (userId !== owner && !isAdmin(interaction, guildConfig)) return reply(res, '❌ Tylko osoba, która przejęła ticket (lub administrator), może go zwolnić.');
       postMessage(chId, { content: `🔓 <@${userId}> zwolnił(a) ten ticket — czeka na nowego opiekuna.`, allowed_mentions: { parse: [] } });
+      notifyTicketOwner(ticket.ownerId,
+        `🔔 Obsługa zwolniła ticket **${ticket.channel.name}**. Zgłoszenie oczekuje teraz na obsługę.\n` +
+        `Otwórz ticket: https://discord.com/channels/${interaction.guild_id}/${chId}`)
+        .catch(e => console.error('[tickets] Powiadomienie DM o zwolnieniu nie powiodło się:', e));
+      const fields = (embed.fields || []).filter(f => f.name !== STATUS_FIELD && f.name !== CLAIM_FIELD);
+      fields.push({ name: STATUS_FIELD, value: '⏳ Oczekuje na obsługę' });
       return res.json({
         type: 7,
         data: {
-          embeds: [{ ...embed, fields: (embed.fields || []).filter(f => f.name !== CLAIM_FIELD) }],
+          embeds: [{ ...embed, fields }],
           components: [ticketControls(false)]
         }
       });
