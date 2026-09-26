@@ -538,18 +538,18 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
   }
   const channel = created.data;
 
-  const vars = { user: `<@${user.id}>`, type: type.LABEL, number: pad(number), ...values };
+  const supportMentions = support.map(roleId => `<@&${roleId}>`).join(', ');
+  const vars = { user: `<@${user.id}>`, type: type.LABEL, number: pad(number), support: supportMentions || 'obsługa', ...values };
   const pingSupport = pick(t, type, 'PING_SUPPORT') !== false && support.length > 0;
-  const emoji = plainEmoji(type.EMOJI) || '🎫';
 
   const sent = await postMessage(channel.id, {
     content: `<@${user.id}>${pingSupport ? ' ' + support.map(r => `<@&${r}>`).join(' ') : ''}`,
     allowed_mentions: { users: [user.id], roles: pingSupport ? support : [] },
     embeds: [{
       author: { name: user.global_name || user.username, icon_url: avatarUrl(user) },
-      title: `${emoji} Ticket #${pad(number)} — ${type.LABEL}`,
+      title: `${name} - ${type.LABEL}`,
       description: fillTemplate(pick(t, type, 'WELCOME_MESSAGE') ||
-        'Dziękujemy za zgłoszenie, {user}! Ktoś z administracji zajmie się Twoją sprawą najszybciej, jak to możliwe. Możesz w międzyczasie dopisać dodatkowe informacje lub dodać załączniki.', vars),
+        'Dziękujemy za zgłoszenie, {user}! Zespół {support} zajmie się Twoją sprawą najszybciej, jak to możliwe. Możesz w międzyczasie dopisać dodatkowe informacje lub dodać załączniki.', vars),
       color: parseColor(type.COLOR) ?? COLORS.blue,
       fields: answers,
       footer: { text: `Ticket #${pad(number)} • ${type.LABEL}` },
