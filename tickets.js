@@ -136,7 +136,7 @@ const textInput = (f) => row({
   custom_id: String(f.ID).slice(0, 100),
   label: String(f.LABEL).slice(0, 45),
   style: isParagraph(f) ? 2 : 1,
-  required: f.REQUIRED !== false,
+  required: true,
   min_length: f.MIN_LENGTH || undefined,
   max_length: Math.min(f.MAX_LENGTH || 1000, 4000),
   ...(f.PLACEHOLDER ? { placeholder: String(f.PLACEHOLDER).slice(0, 100) } : {})
@@ -181,31 +181,23 @@ function parseColor(c) {
   return undefined;
 }
 
-// Domyślne pola formularza (można zmienić w TICKETS.FTD.FIELDS / TICKETS.COMMAND.FIELDS,
-// w kategorii TYPES[].FIELDS — tylko dla Command — albo we wspólnym TICKETS.FIELDS)
+// Domyślne pola formularza można ustawić w FTD.FIELDS, COMMAND.FIELDS lub TICKETS.FIELDS.
 const DEFAULT_FIELDS_LIST = [
   { ID: 'odznaka', LABEL: 'Numer odznaki', PLACEHOLDER: '[XXX]', MAX_LENGTH: 20 },
   { ID: 'imie_nazwisko', LABEL: 'Imię Nazwisko', PLACEHOLDER: 'Imie Nazwisko', MAX_LENGTH: 80 },
   { ID: 'stopien', LABEL: 'Stopień', PLACEHOLDER: 'np. Police Officer III', MAX_LENGTH: 80 }
 ];
-const DEFAULT_FIELDS_BUTTON = [
-  { ID: 'temat', LABEL: 'Temat', MAX_LENGTH: 100 },
-  { ID: 'opis', LABEL: 'Opisz swoją sprawę', STYLE: 'paragraph', MAX_LENGTH: 1000 }
-];
 
-// mode: 'l' = tryb FTD (lista rozwijana), 'b' = tryb Command (przyciski). Discord pozwala na max 5 pól w formularzu.
-// W trybie FTD każda pozycja z listy pokazuje TEN SAM formularz — ustawiany globalnie dla panelu
-// (TICKETS.FTD.FIELDS, awaryjnie TICKETS.FIELDS), a nie osobno dla każdej kategorii.
-// W trybie Command każdy przycisk może mieć własne pola (TYPES[].FIELDS ma pierwszeństwo
-// przed TICKETS.COMMAND.FIELDS, a to przed wspólnym TICKETS.FIELDS).
+// mode: 'l' = formularz FTD, 'b' = formularz Command. Discord pozwala na max 5 pól.
+// Command domyślnie używa tych samych pól co FTD; pola kategorii i COMMAND.FIELDS mogą je nadpisać.
 function getFields(t, type, mode) {
   if (mode === 'l') {
     const ftd = t.FTD?.FIELDS?.length ? t.FTD.FIELDS : t.FIELDS;
     return (ftd?.length ? ftd : DEFAULT_FIELDS_LIST).slice(0, 5);
   }
-  const cmd = t.COMMAND?.FIELDS?.length ? t.COMMAND.FIELDS : t.FIELDS;
-  const custom = type.FIELDS?.length ? type.FIELDS : cmd;
-  return (custom?.length ? custom : DEFAULT_FIELDS_BUTTON).slice(0, 5);
+  const custom = type.FIELDS?.length ? type.FIELDS : t.COMMAND?.FIELDS;
+  const shared = custom?.length ? custom : (t.FTD?.FIELDS?.length ? t.FTD.FIELDS : t.FIELDS);
+  return (shared?.length ? shared : DEFAULT_FIELDS_LIST).slice(0, 5);
 }
 
 // ───────────────────────── Uprawnienia ─────────────────────────
@@ -437,34 +429,29 @@ async function makeTranscript(ctx, ticket, type, messages) {
 
 // ───────────────────────── Panel ─────────────────────────
 
-// Komponenty panelu: 'command' (przyciski, do 25, po 5 w rzędzie) albo 'ftd' (rozwijane menu, do 25 opcji)
+// Komponenty obu paneli używają list rozwijanych z osobnymi kategoriami.
 function buildPanelComponents(t, mode, placeholder) {
   const types = getPanelTypes(t, mode);
-  if (mode === 'ftd') {
-    return [row({
-      type: 3,
-      custom_id: 'tkt_select',
-      placeholder: String(placeholder || t.FTD?.PLACEHOLDER || t.PLACEHOLDER || 'Wybierz kategorię...').slice(0, 150),
-      min_values: 1,
-      max_values: 1,
-      options: types.map(ty => {
-        const em = parseEmoji(ty.EMOJI);
-        return {
-          label: String(ty.LABEL).slice(0, 100),
-          value: String(ty.ID).slice(0, 100),
-          ...(ty.DESCRIPTION ? { description: String(ty.DESCRIPTION).slice(0, 100) } : {}),
-          ...(em ? { emoji: em } : {})
-        };
-      })
-    })];
-  }
-  const buttons = types.map(ty => btn(ty.LABEL, 1, `tkt_open_${ty.ID}`, ty.EMOJI));
-  const rows = [];
-  for (let i = 0; i < buttons.length; i += 5) rows.push(row(...buttons.slice(i, i + 5)));
-  return rows;
+  const section = panelSection(t, mode);
+  return [row({
+    type: 3,
+    custom_id: mode === 'ftd' ? 'tkt_select' : 'tkt_select_command',
+    placeholder: String(placeholder || section.PLACEHOLDER || t.PLACEHOLDER || 'Wybierz kategorię...').slice(0, 150),
+    min_values: 1,
+    max_values: 1,
+    options: types.map(ty => {
+      const em = parseEmoji(ty.EMOJI);
+      return {
+        label: String(ty.LABEL).slice(0, 100),
+        value: String(ty.ID).slice(0, 100),
+        ...(ty.DESCRIPTION ? { description: String(ty.DESCRIPTION).slice(0, 100) } : {}),
+        ...(em ? { emoji: em } : {})
+      };
+    })
+  })];
 }
 
-// Formularz otwarcia ticketu (wspólny dla przycisku i listy)
+// Formularz otwarcia ticketu dla wybranego trybu panelu.
 const ticketModal = (t, type, mode) => ({
   type: 9,
   data: {
@@ -708,9 +695,7 @@ async function handleCommand(interaction, guildConfig, t, res) {
     if (!isAdmin(interaction, guildConfig)) return done('❌ Brak uprawnień.');
     const mode = opts.tryb || (t.PANEL_STYLE === 'ftd' ? 'ftd' : 'command');
     const P = panelSection(t, mode).PANEL || t.PANEL || {};
-    const defaultDesc = mode === 'ftd'
-      ? 'Potrzebujesz pomocy? Wybierz kategorię z listy poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.'
-      : 'Potrzebujesz pomocy? Kliknij przycisk poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.';
+    const defaultDesc = 'Potrzebujesz pomocy? Wybierz kategorię z listy poniżej, aby otworzyć ticket. Prywatny kanał zostanie utworzony tylko dla Ciebie i administracji.';
     const sent = await postMessage(opts.kanal || chId, {
       embeds: [{
         title: opts.tytul || P.TITLE || '🎫 Centrum pomocy',
@@ -723,7 +708,7 @@ async function handleCommand(interaction, guildConfig, t, res) {
       components: buildPanelComponents(t, mode, opts.placeholder)
     });
     return done(sent
-      ? `✅ Panel ticketów (${mode === 'ftd' ? 'FTD — lista rozwijana' : 'Command — przyciski'}) wysłany na <#${opts.kanal || chId}>.`
+      ? `✅ Panel ticketów (${mode === 'ftd' ? 'FTD' : 'Command'} — lista rozwijana) wysłany na <#${opts.kanal || chId}>.`
       : '❌ Nie udało się wysłać panelu. Sprawdź uprawnienia bota na tym kanale oraz czy konfiguracja `TYPES` jest poprawna.');
   }
 
@@ -817,21 +802,22 @@ async function handleButton(interaction, guildConfig, t, res) {
   const chId = interaction.channel_id;
 
   // Otwarcie ticketu (lista lub przycisk) → formularz
-  if (id === 'tkt_select' || id.startsWith('tkt_open_')) {
-    const isSelect = id === 'tkt_select';
+  if (id === 'tkt_select' || id === 'tkt_select_command' || id.startsWith('tkt_open_')) {
+    const isSelect = id === 'tkt_select' || id === 'tkt_select_command';
+    const mode = id === 'tkt_select_command' ? 'command' : 'ftd';
     const typeId = isSelect ? interaction.data.values?.[0] : id.slice('tkt_open_'.length);
     const type = findType(t, typeId);
     if (!type) return reply(res, '❌ Nieznana kategoria ticketu.');
 
     const denied = checkAccess(interaction, guildConfig, t, type);
     if (denied) reply(res, denied);
-    else res.json(ticketModal(t, type, isSelect ? 'l' : 'b'));
+    else res.json(ticketModal(t, type, isSelect ? (mode === 'ftd' ? 'l' : 'b') : 'b'));
 
     // Zresetuj menu na panelu (inaczej Discord zostawia zaznaczoną opcję i nie da się jej wybrać ponownie)
     const msg = interaction.message;
     if (isSelect && msg?.id) {
       const placeholder = msg.components?.[0]?.components?.[0]?.placeholder;
-      discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, 'ftd', placeholder) });
+      discord('PATCH', `/channels/${chId}/messages/${msg.id}`, { components: buildPanelComponents(t, mode, placeholder) });
     }
     return;
   }
