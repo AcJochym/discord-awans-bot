@@ -828,12 +828,22 @@ async function handleButton(interaction, guildConfig, t, res) {
     const isSelect = id === 'tkt_select' || id === 'tkt_select_command';
     const mode = id === 'tkt_select_command' ? 'command' : 'ftd';
     const typeId = isSelect ? interaction.data.values?.[0] : id.slice('tkt_open_'.length);
+    console.log(`[tickets] open request id=${id} mode=${mode} typeId=${typeId || '-'}`);
     const type = findType(t, typeId);
-    if (!type) return reply(res, '❌ Nieznana kategoria ticketu.');
+    if (!type) {
+      console.warn(`[tickets] selected type not found: ${typeId || '-'}`);
+      return reply(res, '❌ Nieznana kategoria ticketu.');
+    }
 
     const denied = checkAccess(interaction, guildConfig, t, type);
-    if (denied) reply(res, denied);
-    else res.json(ticketModal(t, type, isSelect ? (mode === 'ftd' ? 'l' : 'b') : 'b'));
+    if (denied) {
+      console.log(`[tickets] open denied typeId=${typeId}`);
+      reply(res, denied);
+    } else {
+      const modal = ticketModal(t, type, isSelect ? (mode === 'ftd' ? 'l' : 'b') : 'b');
+      console.log(`[tickets] sending modal custom_id=${modal.data.custom_id} rows=${modal.data.components.length}`);
+      res.json(modal);
+    }
 
     return;
   }
