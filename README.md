@@ -12,7 +12,7 @@ npm start
 
 Zmienne środowiskowe opisuje plik `.env.example`.
 
-Aby odpowiedzi na wiadomości działały, w Discord Developer Portal włącz **Message Content Intent** w ustawieniach bota. Bot odpowiada na DM-y i wiadomości, w których zostanie oznaczony.
+Aby odpowiedzi na wiadomości działały, w Discord Developer Portal włącz **Message Content Intent** w ustawieniach bota. Bot odpowiada na DM-y i wiadomości, w których zostanie oznaczony: na `hej` wita się, na `urlop` wysyła instrukcję `/pomoc_urlop`, a na słowa `command`, `ticket`, `raport` lub `kontakt` wyjaśnia, jak otworzyć ticket. Inne wiadomości dostają krótką podpowiedź.
 
 ## System ticketów (styl Ticket Tool)
 
