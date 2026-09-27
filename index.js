@@ -1,5 +1,6 @@
 import express from 'express';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
+import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
 
@@ -27,6 +28,34 @@ function loadServerConfigs() {
 }
 
 const serverConfigs = loadServerConfigs();
+
+const discordClient = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent
+  ],
+  partials: [Partials.Channel]
+});
+
+discordClient.once('ready', () => {
+  console.log(`🤖 Połączono z Discord Gateway jako ${discordClient.user.tag}`);
+});
+
+discordClient.on('messageCreate', async message => {
+  if (message.author.bot) return;
+
+  const isDirectMessage = message.guildId === null;
+  const isMentioned = discordClient.user && message.mentions.has(discordClient.user);
+  if (!isDirectMessage && !isMentioned) return;
+
+  try {
+    await message.reply('Cześć! Jestem tutaj. W czym mogę pomóc?');
+  } catch (error) {
+    console.error('Nie udało się odpowiedzieć na wiadomość:', error);
+  }
+});
 
 // Walidacja podstawowych sekretów na starcie
 const REQUIRED_ENV_VARS = ['DISCORD_PUBLIC_KEY', 'DISCORD_BOT_TOKEN', 'BOT_OWNER_ID', 'SERVER_CONFIGS_JSON'];
@@ -849,4 +878,6 @@ const SERVER_PORT = process.env.PORT || 8080;
 app.listen(SERVER_PORT, '0.0.0.0', () => {
   console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
   announceUpdateToAllServers();
+  discordClient.login(process.env.DISCORD_BOT_TOKEN)
+    .catch(error => console.error('Nie udało się połączyć z Discord Gateway:', error));
 });
