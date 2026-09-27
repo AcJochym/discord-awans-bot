@@ -29,6 +29,27 @@ function loadServerConfigs() {
 
 const serverConfigs = loadServerConfigs();
 
+const URLOP_HELP_EMBED = {
+  title: "🌴 Instrukcja Systemu Urlopowego — Komenda /urlop",
+  color: 16753920,
+  description: "Komenda `/urlop` pozwala pracownikom bezpiecznie i poprawnie złożyć wniosek o przerwę od służby.\n\n" +
+    "📌 **Wymagane parametry komendy:**\n" +
+    "• `rozpoczecie` — Data rozpoczęcia urlopu.\n" +
+    "• `zakonczenie` — Data powrotu z urlopu.\n" +
+    "• `czas` — Ilość dni w formie cyfry (np. `7`). Bot automatycznie dopisze słowo 'dni' lub 'dzień'.\n" +
+    "• `powod` — Krótkie wyjaśnienie powodu nieobecności.\n\n" +
+    "⚠️ **Krytyczne zasady i formatowanie (Jak pisać):**\n" +
+    "Aby bot przepuścił wniosek, parametry `rozpoczecie` oraz `zakonczenie` **muszą być napisane w ścisłym formacie daty z kropkami: DD.MM.RRRR**\n" +
+    "*Przykład poprawnego zapisu:* `25.06.2026`\n" +
+    "*Przykład błędnego zapisu:* `25/06`, `25-06-2026`, `dzisiaj` — przy takich wpisach bot natychmiast przerwie komendę.\n\n" +
+    "🔄 **Przebieg składania wniosku:**\n" +
+    "1. Pracownik wpisuje `/urlop` na wyznaczonym w konfiguracji kanale urlopowym. Użycie jej w innym miejscu wywoła błąd.\n" +
+    "2. Jeśli format daty jest zły, bot anuluje proces i wysyła pracownikowi upomnienie w prywatnej wiadomości.\n" +
+    "3. Jeśli wszystko jest w porządku, pracownik dostaje na DM informację: *'Twój wniosek urlopowy został przesłany i oczekuje na akceptację.'*\n" +
+    "4. Na kanale generuje się estetyczny pomarańczowy dokument z przyciskami decyzyjnymi dla Zarządu.\n" +
+    "5. Jeśli masz już aktywny, nierozpatrzony wniosek, bot nie pozwoli złożyć kolejnego — najpierw musi zostać rozpatrzony."
+};
+
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -50,8 +71,21 @@ discordClient.on('messageCreate', async message => {
   const isMentioned = discordClient.user && message.mentions.has(discordClient.user);
   if (!isDirectMessage && !isMentioned) return;
 
+  const words = new Set(message.content.toLocaleLowerCase('pl-PL').match(/[\p{L}\p{N}_]+/gu) || []);
+  let response;
+
+  if (words.has('urlop')) {
+    response = { embeds: [URLOP_HELP_EMBED] };
+  } else if (['command', 'ticket', 'raport', 'kontakt'].some(word => words.has(word))) {
+    response = 'Aby otworzyć ticket, wejdź na kanale w panel ticketów, kliknij przycisk otwierania zgłoszenia, wybierz kategorię i wypełnij formularz. Po utworzeniu ticketu bot udostępni Ci prywatny kanał, na którym możesz opisać sprawę i dodać załączniki. Jeśli nie widzisz panelu ticketów, skontaktuj się z administracją.';
+  } else if (words.has('hej')) {
+    response = 'Cześć! Jestem tutaj. W czym mogę pomóc?';
+  } else {
+    response = 'Nie wiem, o co chodzi. Napisz `urlop`, `ticket`, `raport` lub `kontakt`, a podpowiem, co zrobić.';
+  }
+
   try {
-    await message.reply('Cześć! Jestem tutaj. W czym mogę pomóc?');
+    await message.reply(response);
   } catch (error) {
     console.error('Nie udało się odpowiedzieć na wiadomość:', error);
   }
@@ -529,28 +563,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       if (name === 'pomoc_urlop') {
         return res.json({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            embeds: [{
-              title: "🌴 Instrukcja Systemu Urlopowego — Komenda /urlop",
-              color: 16753920,
-              description: "Komenda `/urlop` pozwala pracownikom bezpiecznie i poprawnie złożyć wniosek o przerwę od służby.\n\n" +
-                "📌 **Wymagane parametry komendy:**\n" +
-                "• `rozpoczecie` — Data rozpoczęcia urlopu.\n" +
-                "• `zakonczenie` — Data powrotu z urlopu.\n" +
-                "• `czas` — Ilość dni w formie cyfry (np. `7`). Bot automatycznie dopisze słowo 'dni' lub 'dzień'.\n" +
-                "• `powod` — Krótkie wyjaśnienie powodu nieobecności.\n\n" +
-                "⚠️ **Krytyczne zasady i formatowanie (Jak pisać):**\n" +
-                "Aby bot przepuścił wniosek, parametry `rozpoczecie` oraz `zakonczenie` **muszą być napisane w ścisłym formacie daty z kropkami: DD.MM.RRRR**\n" +
-                "*Przykład poprawnego zapisu:* `25.06.2026`\n" +
-                "*Przykład błędnego zapisu:* `25/06`, `25-06-2026`, `dzisiaj` — przy takich wpisach bot natychmiast przerwie komendę.\n\n" +
-                "🔄 **Przebieg składania wniosku:**\n" +
-                "1. Pracownik wpisuje `/urlop` na wyznaczonym w konfiguracji kanale urlopowym. Użycie jej w innym miejscu wywoła błąd.\n" +
-                "2. Jeśli format daty jest zły, bot anuluje proces i wysyła pracownikowi upomnienie w prywatnej wiadomości.\n" +
-                "3. Jeśli wszystko jest w porządku, pracownik dostaje na DM informację: *'Twój wniosek urlopowy został przesłany i oczekuje na akceptację.'*\n" +
-                "4. Na kanale generuje się estetyczny pomarańczowy dokument z przyciskami decyzyjnymi dla Zarządu.\n" +
-                "5. Jeśli masz już aktywny, nierozpatrzony wniosek, bot nie pozwoli złożyć kolejnego — najpierw musi zostać rozpatrzony obecny."
-            }],
-          }
+          data: { embeds: [URLOP_HELP_EMBED] }
         });
       }
     }
