@@ -1,7 +1,7 @@
 # discord-awans-bot
 
 Bot Discord do zarządzania frakcją (awanse, degradacje, urlopy, nagany, szkolenia, pojazdy, zagrożenia, **tickety**).
-Działa na HTTP Interactions (Express) — bez połączenia z gatewayem.
+Działa na HTTP Interactions (Express) oraz Discord Gateway, którego używa do odpowiadania na wiadomości prywatne i wiadomości z oznaczeniem bota.
 
 ## Uruchomienie
 
@@ -11,6 +11,8 @@ npm start
 ```
 
 Zmienne środowiskowe opisuje plik `.env.example`.
+
+Aby odpowiedzi na wiadomości działały, w Discord Developer Portal włącz **Message Content Intent** w ustawieniach bota. Bot odpowiada na DM-y i wiadomości, w których zostanie oznaczony.
 
 ## System ticketów (styl Ticket Tool)
 
