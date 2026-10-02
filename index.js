@@ -50,6 +50,12 @@ const URLOP_HELP_EMBED = {
     "5. Jeśli masz już aktywny, nierozpatrzony wniosek, bot nie pozwoli złożyć kolejnego — najpierw musi zostać rozpatrzony."
 };
 
+const LSPD_RESOURCES = {
+  handbook: 'https://docs.google.com/document/d/1YRmOh3BvidyKueDDVQdwEh8cQ67aLOC0cZOcs4Q2SW0/edit?usp=sharing',
+  rules: 'https://docs.google.com/document/d/1Ug8rZ_slQHtgXgaD5K4BuVF9K45DGqTah24yJgSx6wA/edit?usp=sharing',
+  database: 'https://docs.google.com/spreadsheets/d/10LmZ0AXRY4OJDwN9sG7mw5GMIiqFtXj7XOLFHoMi6Yc/edit?usp=sharing'
+};
+
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -76,12 +82,26 @@ discordClient.on('messageCreate', async message => {
 
   if (words.has('urlop')) {
     response = { embeds: [URLOP_HELP_EMBED] };
-  } else if (['command', 'ticket', 'raport', 'kontakt'].some(word => words.has(word))) {
+  } else if ((words.has('high') && words.has('command')) || words.has('highcommand') || words.has('chief')) {
+    response = '**High Command LSPD:**\n• [02] Mathew Ray — Assistant Chief Of Police\n• [01] Peter O\'Connor — Chief of Police';
+  } else if (words.has('ftd') || (words.has('field') && words.has('training')) || (words.has('szkolenie') && (words.has('kto') || words.has('ftd')))) {
+    response = '**Field Training Division (FTD):**\n• [109] Aiden Walker — Commander, Field Training Division\n• [122] Katrina Sheeran — Under Commander, Field Training Division';
+  } else if (words.has('command')) {
+    response = '**Command LSPD:**\n• [101] Thomas McKenzie — Commander\n• [102] Thomas Kenley — Commander\n• [103] Johny Asteroid — Commander';
+  } else if (words.has('kompendium') || words.has('handbook')) {
+    response = `**Kompendium LSPD:** ${LSPD_RESOURCES.handbook}`;
+  } else if (words.has('regulamin') || words.has('rules')) {
+    response = `**Regulamin LSPD:** ${LSPD_RESOURCES.rules}`;
+  } else if (words.has('database') || words.has('baza')) {
+    response = `**Database LSPD:** ${LSPD_RESOURCES.database}`;
+  } else if (['lspd', 'policja', 'stopnie', 'rangi', 'rekrutacja', 'procedury'].some(word => words.has(word))) {
+    response = `**Materiały LSPD:**\n• Kompendium: ${LSPD_RESOURCES.handbook}\n• Regulamin: ${LSPD_RESOURCES.rules}\n• Database: ${LSPD_RESOURCES.database}\n\nInformacje o szkoleniach znajdziesz pod hasłem \`FTD\`, a skład dowództwa pod hasłem \`Command\` lub \`High Command\`.`;
+  } else if (['ticket', 'raport', 'kontakt'].some(word => words.has(word))) {
     response = 'Aby otworzyć ticket, wejdź na kanale w panel ticketów, kliknij przycisk otwierania zgłoszenia, wybierz kategorię i wypełnij formularz. Po utworzeniu ticketu bot udostępni Ci prywatny kanał, na którym możesz opisać sprawę i dodać załączniki. Jeśli nie widzisz panelu ticketów, skontaktuj się z administracją.';
   } else if (words.has('hej')) {
     response = 'Cześć! Jestem tutaj. W czym mogę pomóc?';
   } else {
-    response = 'Nie wiem, o co chodzi. Napisz `urlop`, `ticket`, `raport` lub `kontakt`, a podpowiem, co zrobić.';
+    response = 'Nie wiem, o co chodzi. Zapytaj o `Command`, `High Command`, `FTD`, `kompendium`, `regulamin`, `database`, `urlop` lub `ticket`.';
   }
 
   try {
