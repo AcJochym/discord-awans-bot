@@ -75,7 +75,46 @@ discordClient.on('messageCreate', async message => {
 
   const isDirectMessage = message.guildId === null;
   const isMentioned = discordClient.user && message.mentions.has(discordClient.user);
-  if (!isDirectMessage && !isMentioned) return;
+  const isRelayRequest = !isDirectMessage && /\bprzeka(?:ż|z)\b/iu.test(message.content);
+  if (!isDirectMessage && !isMentioned && !isRelayRequest) return;
+
+  if (isRelayRequest) {
+    const recipient = [...message.mentions.users.values()].find(user =>
+      user.id !== message.author.id && user.id !== discordClient.user?.id
+    );
+    const recipientMention = recipient && message.content.match(new RegExp(`<@!?${recipient.id}>`));
+    const forwardedContent = recipientMention
+      ? message.content.slice(recipientMention.index + recipientMention[0].length).trim()
+      : '';
+
+    if (!recipient || !forwardedContent) {
+      await message.reply({
+        content: 'Aby przekazać wiadomość, użyj: `przekaż @użytkownik treść wiadomości`.',
+        allowedMentions: { repliedUser: false }
+      });
+      return;
+    }
+
+    try {
+      await recipient.send({
+        content: `📨 Wiadomość od **${message.member?.displayName || message.author.username}**:\n${forwardedContent}`,
+        allowedMentions: { parse: [] }
+      });
+    } catch (error) {
+      console.error('Nie udało się przekazać wiadomości na DM:', error);
+      await message.reply({
+        content: `Nie udało się wysłać DM do **${recipient.username}**. Ta osoba może mieć zablokowane wiadomości prywatne od członków serwera.`,
+        allowedMentions: { repliedUser: false }
+      }).catch(replyError => console.error('Nie udało się potwierdzić błędu przekazania:', replyError));
+      return;
+    }
+
+    await message.reply({
+      content: `✅ Przekazałem Twoją wiadomość do **${recipient.username}** na DM.`,
+      allowedMentions: { repliedUser: false }
+    }).catch(error => console.error('Nie udało się potwierdzić przekazania:', error));
+    return;
+  }
 
   const words = new Set(message.content.toLocaleLowerCase('pl-PL').match(/[\p{L}\p{N}_]+/gu) || []);
   let response;
