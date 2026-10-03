@@ -6,7 +6,7 @@ import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, getStaff } from './staff.js';
-import { initLogStore, addLog, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
+import { initLogStore, readServerConfigs, writeServerConfig, addLog, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -33,7 +33,189 @@ function loadServerConfigs() {
 }
 
 const serverConfigs = loadServerConfigs();
-initLogStore();
+const logStoreReady = initLogStore();
+const savedConfigGuilds = new Set();
+
+const sensitiveConfigKey = /token|password|secret|credential|webhook|private|api.?key/i;
+const SECRET_CONFIG_PLACEHOLDER = '[KEEP_EXISTING_SECRET]';
+const isConfigObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+let cachedConfigEncryptionKey = null;
+
+function editorConfig(value) {
+  if (Array.isArray(value)) return value.map(editorConfig);
+  if (!isConfigObject(value)) return value;
+  return Object.fromEntries(Object.entries(value)
+    .map(([key, child]) => [
+      key,
+      sensitiveConfigKey.test(key) ? (child ? SECRET_CONFIG_PLACEHOLDER : '') : editorConfig(child)
+    ]));
+}
+
+function getConfigEncryptionKey() {
+  const masterKey = process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '';
+  if (masterKey.length < 16) throw new Error('Ustaw CONFIG_ENCRYPTION_KEY lub DASHBOARD_SESSION_SECRET (co najmniej 16 znaków), aby szyfrować konfigurację.');
+  if (!cachedConfigEncryptionKey) {
+    cachedConfigEncryptionKey = crypto.scryptSync(masterKey, 'law-enforcement-server-config-v1', 32);
+  }
+  return cachedConfigEncryptionKey;
+}
+
+function encryptConfigValue(value, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return {
+    __encryptedConfig: 1,
+    iv: iv.toString('base64url'),
+    tag: cipher.getAuthTag().toString('base64url'),
+    data: encrypted.toString('base64url')
+  };
+}
+
+function encryptConfigSecrets(value, key) {
+  if (Array.isArray(value)) return value.map((item) => encryptConfigSecrets(item, key));
+  if (!isConfigObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([name, child]) => [
+    name,
+    sensitiveConfigKey.test(name) ? encryptConfigValue(child, key) : encryptConfigSecrets(child, key)
+  ]));
+}
+
+function decryptConfigSecrets(value, key) {
+  if (Array.isArray(value)) return value.map((item) => decryptConfigSecrets(item, key));
+  if (!isConfigObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([name, child]) => {
+    if (!sensitiveConfigKey.test(name)) return [name, decryptConfigSecrets(child, key)];
+    if (child?.__encryptedConfig !== 1) return [name, child];
+    if (!key) throw new Error('Brak klucza do odszyfrowania konfiguracji.');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(child.iv, 'base64url'));
+    decipher.setAuthTag(Buffer.from(child.tag, 'base64url'));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(child.data, 'base64url')),
+      decipher.final()
+    ]).toString('utf8');
+    return [name, JSON.parse(decrypted)];
+  }));
+}
+
+function containsSensitiveKey(value) {
+  if (Array.isArray(value)) return value.some(containsSensitiveKey);
+  if (!isConfigObject(value)) return false;
+  return Object.entries(value).some(([name, child]) => sensitiveConfigKey.test(name) || containsSensitiveKey(child));
+}
+
+function mergeConfigSchemas(values) {
+  const present = values.filter((value) => value !== undefined);
+  if (!present.length) return undefined;
+  if (present.some(Array.isArray)) {
+    const items = present.flatMap((value) => Array.isArray(value) ? value : []);
+    return items.length ? [mergeConfigSchemas(items)] : [];
+  }
+  if (present.some(isConfigObject)) {
+    const keys = new Set(present.filter(isConfigObject).flatMap((value) => Object.keys(value)));
+    return Object.fromEntries([...keys].map((key) => [
+      key,
+      mergeConfigSchemas(present.filter(isConfigObject).map((value) => value[key]))
+    ]));
+  }
+  return present[0];
+}
+
+const configSchema = mergeConfigSchemas(Object.values(serverConfigs));
+
+function validateConfigShape(template, value, path = 'config') {
+  if (Array.isArray(template)) {
+    if (!Array.isArray(value) || value.length > 100) return `${path}: oczekiwano tablicy (maks. 100 elementów).`;
+    if (!template.length) return value.length ? `${path}: nie można dodawać elementów do pustej tablicy.` : null;
+    for (const [index, item] of value.entries()) {
+      const error = validateConfigShape(template[0], item, `${path}[${index}]`);
+      if (error) return error;
+    }
+    return null;
+  }
+  if (isConfigObject(template)) {
+    if (!isConfigObject(value)) return `${path}: oczekiwano obiektu.`;
+    for (const [key, child] of Object.entries(value)) {
+      if (!Object.hasOwn(template, key)) return `${path}.${key}: nieznane pole.`;
+      const error = validateConfigShape(template[key], child, `${path}.${key}`);
+      if (error) return error;
+    }
+    return null;
+  }
+  if (typeof value !== typeof template || (typeof value === 'number' && !Number.isFinite(value))) {
+    return `${path}: nieprawidłowy typ wartości.`;
+  }
+  if (typeof value === 'string' && value.length > 4000) return `${path}: tekst jest za długi.`;
+  return null;
+}
+
+function restoreSensitiveConfig(base, edited) {
+  if (Array.isArray(edited)) {
+    return edited.map((value, index) => restoreSensitiveConfig(Array.isArray(base) ? base[index] : undefined, value));
+  }
+  if (!isConfigObject(edited)) return edited;
+  const result = Object.fromEntries(Object.entries(edited).map(([key, value]) => [
+    key,
+    sensitiveConfigKey.test(key)
+      ? (value === SECRET_CONFIG_PLACEHOLDER ? (base?.[key] ?? '') : value)
+      : isConfigObject(value) ? restoreSensitiveConfig(base?.[key], value) : value
+  ]));
+  if (isConfigObject(base)) {
+    for (const [key, value] of Object.entries(base)) {
+      if (sensitiveConfigKey.test(key) && !Object.hasOwn(result, key)) result[key] = value;
+      else if (!Object.hasOwn(result, key) && isConfigObject(value) && containsSensitiveKey(value)) {
+        result[key] = restoreSensitiveConfig(value, {});
+      }
+    }
+  }
+  return result;
+}
+
+async function loadSavedServerConfigs() {
+  if (storageMode() !== 'postgres') return;
+  let encryptionKey = null;
+  const protectedSavedGuilds = new Set();
+  try {
+    encryptionKey = getConfigEncryptionKey();
+  } catch (error) {
+    console.warn(`Sekrety konfiguracji nie będą migrowane do bazy: ${error.message}`);
+  }
+
+  try {
+    for (const row of await readServerConfigs()) {
+      const guildId = String(row.guild_id);
+      if (!Object.hasOwn(serverConfigs, guildId) || !isConfigObject(row.settings)) continue;
+      try {
+        const savedConfig = decryptConfigSecrets(row.settings, encryptionKey);
+        const error = validateConfigShape(configSchema, savedConfig);
+        if (error) {
+          console.warn(`Pominięto nieprawidłową konfigurację serwera ${guildId}: ${error}`);
+          protectedSavedGuilds.add(guildId);
+          continue;
+        }
+        serverConfigs[guildId] = restoreSensitiveConfig(serverConfigs[guildId], savedConfig);
+        savedConfigGuilds.add(guildId);
+      } catch (error) {
+        console.warn(`Pominięto konfigurację serwera ${guildId}: nie udało się odszyfrować zapisanych wartości.`);
+        protectedSavedGuilds.add(guildId);
+      }
+    }
+
+    if (encryptionKey) {
+      for (const [guildId, config] of Object.entries(serverConfigs)) {
+        if (protectedSavedGuilds.has(guildId)) continue;
+        try {
+          await writeServerConfig(guildId, encryptConfigSecrets(config, encryptionKey));
+          savedConfigGuilds.add(guildId);
+        } catch (error) {
+          console.error(`Nie udało się zmigrować konfiguracji serwera ${guildId}:`, error.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Nie udało się wczytać konfiguracji z PostgreSQL:', error.message);
+  }
+}
 
 function addDashboardLog(level = 'info', message, meta = {}) {
   addLog(level, message, meta);
@@ -789,6 +971,50 @@ app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   }
 });
 
+app.get('/api/config/:guildId', requireDashboardAuth, (req, res) => {
+  const guildId = String(req.params.guildId);
+  if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
+  res.json({
+    ok: true,
+    guildId,
+    config: editorConfig(serverConfigs[guildId]),
+    saved: savedConfigGuilds.has(guildId),
+    databaseAvailable: storageMode() === 'postgres' && (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16
+  });
+});
+
+app.put('/api/config/:guildId', requireDashboardAuth, express.json({ limit: '100kb' }), async (req, res) => {
+  const guildId = String(req.params.guildId);
+  if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
+  if (storageMode() !== 'postgres') {
+    return res.status(503).json({ ok: false, error: 'Zapis konfiguracji wymaga dostępnego PostgreSQL (DATABASE_URL).' });
+  }
+  let encryptionKey;
+  try {
+    encryptionKey = getConfigEncryptionKey();
+  } catch (error) {
+    return res.status(503).json({ ok: false, error: error.message });
+  }
+
+  const config = req.body?.config;
+  if (!isConfigObject(config)) return res.status(400).json({ ok: false, error: 'Konfiguracja musi być obiektem JSON.' });
+
+  const error = validateConfigShape(configSchema, config);
+  if (error) return res.status(400).json({ ok: false, error });
+
+  try {
+    const updatedConfig = restoreSensitiveConfig(serverConfigs[guildId], config);
+    await writeServerConfig(guildId, encryptConfigSecrets(updatedConfig, encryptionKey));
+    serverConfigs[guildId] = updatedConfig;
+    savedConfigGuilds.add(guildId);
+    addDashboardLog('info', `Zapisano konfigurację serwera ${guildId}.`, { source: 'bot', userId: req.dashUser.id });
+    res.json({ ok: true, guildId, config: editorConfig(serverConfigs[guildId]), saved: true });
+  } catch (saveError) {
+    console.error('Nie udało się zapisać konfiguracji:', saveError.message);
+    res.status(503).json({ ok: false, error: 'Nie udało się zapisać konfiguracji w PostgreSQL.' });
+  }
+});
+
 app.get('/', (_req, res) => res.status(200).send('Law Enforcement bot is online. Discord endpoint: /interactions. Dashboard: /dashboard'));
 
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
@@ -1315,13 +1541,22 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
 const SERVER_PORT = process.env.PORT || 8080;
 
-app.listen(SERVER_PORT, '0.0.0.0', () => {
-  console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
-  addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`, { source: 'bot' });
-  announceUpdateToAllServers();
-  discordClient.login(process.env.DISCORD_BOT_TOKEN)
-    .catch(error => {
-      addDashboardLog('error', 'Nie udało się połączyć z Discord Gateway.', { source: 'bot', error: error.message });
-      console.error('Nie udało się połączyć z Discord Gateway:', error);
-    });
+async function startServer() {
+  await logStoreReady;
+  await loadSavedServerConfigs();
+  app.listen(SERVER_PORT, '0.0.0.0', () => {
+    console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
+    addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`, { source: 'bot' });
+    announceUpdateToAllServers();
+    discordClient.login(process.env.DISCORD_BOT_TOKEN)
+      .catch(error => {
+        addDashboardLog('error', 'Nie udało się połączyć z Discord Gateway.', { source: 'bot', error: error.message });
+        console.error('Nie udało się połączyć z Discord Gateway:', error);
+      });
+  });
+}
+
+startServer().catch((error) => {
+  console.error('Nie udało się uruchomić serwera:', error);
+  process.exitCode = 1;
 });
