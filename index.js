@@ -5,6 +5,7 @@ import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'd
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
+import { getStaff } from './staff.js';
 import { initLogStore, addLog, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
 
 const app = express();
@@ -736,6 +737,24 @@ app.get('/api/logs/export.csv', requireDashboardAuth, async (req, res) => {
   } catch (error) {
     console.error('Błąd eksportu logów:', error.message);
     res.status(500).send('Nie udało się wyeksportować logów.');
+  }
+});
+
+app.get('/api/staff', requireDashboardAuth, async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await getStaff(serverConfigs, String(req.query.guild || ''), getGuildInfo)) });
+  } catch (error) {
+    console.error('Błąd pobierania administracji:', error.message);
+    const intent = error.status === 403;
+    res.status(502).json({
+      ok: false,
+      code: intent ? 'members_intent' : 'error',
+      error: intent
+        ? 'Bot nie może odczytać listy członków. Włącz „Server Members Intent" w Developer Portal (Bot → Privileged Gateway Intents) i upewnij się, że bot jest na serwerze.'
+        : 'Nie udało się pobrać listy administracji.',
+      guilds: error.guilds || [],
+      guildId: error.guildId || ''
+    });
   }
 });
 
