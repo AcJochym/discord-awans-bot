@@ -22,7 +22,14 @@
             <p class="subtitle">Law Enforcement</p>
           </div>
         </div>
-        <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
+        <div class="hero-side">
+          <div id="userChip" class="user-chip" hidden>
+            <img id="userAvatar" alt="" />
+            <span id="userName"></span>
+            <button id="logoutBtn" type="button">Wyloguj</button>
+          </div>
+          <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
+        </div>
       </header>
 
       <nav class="tabs" aria-label="Zakładki dashboardu">
@@ -254,8 +261,32 @@
         return item;
       }
 
+      async function apiFetch(url) {
+        const response = await fetch(url, { credentials: 'same-origin' });
+        if (response.status === 401) {
+          location.href = '/login';
+          throw new Error('unauthorized');
+        }
+        return response;
+      }
+
+      async function loadMe() {
+        try {
+          const data = await (await apiFetch('/api/me')).json();
+          if (!data.ok) return;
+          document.getElementById('userAvatar').src = data.avatarUrl;
+          document.getElementById('userName').textContent = data.name;
+          document.getElementById('userChip').hidden = false;
+        } catch (_) { /* przekierowanie obsłuży apiFetch */ }
+      }
+
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        location.href = '/login';
+      });
+
       async function loadSummary() {
-        const response = await fetch('/api/dashboard-summary');
+        const response = await apiFetch('/api/dashboard-summary');
         const data = await response.json();
 
         if (!data.ok) {
@@ -286,7 +317,7 @@
       }
 
       async function loadServers() {
-        const response = await fetch('/api/servers');
+        const response = await apiFetch('/api/servers');
         const data = await response.json();
 
         guildsContainer.innerHTML = '';
@@ -385,7 +416,7 @@
       }
 
       async function loadLogs() {
-        const response = await fetch('/api/logs');
+        const response = await apiFetch('/api/logs');
         const data = await response.json();
 
         botLogsContainer.innerHTML = '';
@@ -418,6 +449,7 @@
       }
 
       setActiveTab('overview');
+      loadMe();
       refreshDashboard().then(() => { animateLists = false; });
       setInterval(refreshDashboard, 15000);
     </script>
