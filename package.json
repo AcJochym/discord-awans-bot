@@ -1,5 +1,5 @@
 {
-  "name": "frakcyjny-bot",
+  "name": "law-enforcement",
   "version": "1.0.0",
   "description": "Bot Discord do zarządzania frakcją (awanse, urlopy, nagany, szkolenia, tickety itd.)",
   "type": "module",
@@ -15,6 +15,7 @@
     "discord-interactions": "^4.1.0",
     "discord.js": "^14.21.0",
     "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "pg": "^8.13.0"
   }
 }
