@@ -6,7 +6,7 @@ import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, getStaff } from './staff.js';
-import { initLogStore, readServerConfigs, writeServerConfig, addLog, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
+import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -909,6 +909,16 @@ app.get('/api/logs', requireDashboardAuth, async (req, res) => {
   }
 });
 
+app.delete('/api/logs', requireDashboardAuth, requireBotOwner, async (_req, res) => {
+  try {
+    await clearLogs();
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Nie udało się wyczyścić logów:', error.message);
+    res.status(503).json({ ok: false, error: 'Nie udało się wyczyścić logów.' });
+  }
+});
+
 app.get('/api/logs/stats', requireDashboardAuth, async (req, res) => {
   try {
     const tz = Math.max(-50400, Math.min(50400, Math.round(Number(req.query.tz) || 0)));
@@ -1536,7 +1546,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
     addDashboardLog('info', `Użyto komendy /${name} na serwerze ${interaction.guild_id}.`, {
       guildId: interaction.guild_id,
       source: 'server',
-      command: name
+      command: name,
+      userId: interaction.member.user.id,
+      channelId: interaction.channel_id,
+      options: opts
     });
 
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
