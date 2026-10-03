@@ -181,7 +181,11 @@ const pendingUrlopMessages = new Set();
 const usersWithPendingUrlop = new Set();
 
 // Funkcja do pobrania info o guildzie (nazwa)
+const guildInfoCache = new Map();
 async function getGuildInfo(guildId, withCounts = false) {
+  // Dane z licznikami są cache'owane 60 s — panel odświeża się często, a Discord ma limity zapytań
+  const cached = withCounts ? guildInfoCache.get(guildId) : null;
+  if (cached && Date.now() - cached.at < 60000) return cached.data;
   try {
     // Bez with_counts Discord NIE zwraca approximate_member_count
     const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}${withCounts ? '?with_counts=true' : ''}`, {
@@ -191,7 +195,9 @@ async function getGuildInfo(guildId, withCounts = false) {
       console.error(`Błąd pobierania info o guildzie: HTTP ${res.status}`);
       return null;
     }
-    return await res.json();
+    const data = await res.json();
+    if (withCounts) guildInfoCache.set(guildId, { at: Date.now(), data });
+    return data;
   } catch (e) {
     console.error(`Błąd pobierania info o guildzie:`, e);
     return null;
