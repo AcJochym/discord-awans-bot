@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'node:path';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
@@ -6,6 +7,7 @@ import { handleTicketInteraction } from './tickets.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const ROOT_DIR = process.cwd();
 
 
 
@@ -428,11 +430,11 @@ function parseStrictDate(value) {
 }
 
 app.get('/dashboard', (_req, res) => {
-  res.sendFile('dashboard.html');
+  res.sendFile(path.join(ROOT_DIR, 'dashboard.html'));
 });
 
 app.get('/dashboard.css', (_req, res) => {
-  res.sendFile('dashboard.css');
+  res.sendFile(path.join(ROOT_DIR, 'dashboard.css'));
 });
 
 app.get('/api/health', (_req, res) => {
