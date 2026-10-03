@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logowanie – Law Enforcement</title>
+    <link rel="icon" href="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/dashboard.css" />
+  </head>
+  <body class="login-body">
+    <main class="login-card glass-card">
+      <div class="login-banner">
+        <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" onerror="this.remove()" />
+        <img class="brand-logo" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" alt="Law Enforcement" onerror="this.remove()" />
+      </div>
+      <div class="login-content">
+        <h1>Panel administracyjny</h1>
+        <p class="subtitle">Law Enforcement</p>
+        <p id="loginMessage" class="login-message" role="alert" hidden></p>
+        <a class="discord-btn" href="/auth/discord">Zaloguj się przez Discord</a>
+        <p class="muted login-hint">Dostęp mają tylko osoby z wymaganą rolą na serwerze.</p>
+      </div>
+    </main>
+    <script>
+      const messages = {
+        brak_roli: ['error', 'Nie masz wymaganej roli na serwerze Discord, więc nie możesz wejść do panelu.'],
+        config: ['error', 'Logowanie nie jest jeszcze skonfigurowane. Skontaktuj się z administratorem bota.'],
+        state: ['error', 'Sesja logowania wygasła. Spróbuj zalogować się ponownie.'],
+        anulowano: ['info', 'Logowanie zostało anulowane.'],
+        blad: ['error', 'Logowanie nie powiodło się. Spróbuj ponownie za chwilę.']
+      };
+      const entry = messages[new URLSearchParams(location.search).get('error')];
+      if (entry) {
+        const box = document.getElementById('loginMessage');
+        box.textContent = entry[1];
+        box.className = `login-message ${entry[0]}`;
+        box.hidden = false;
+      }
+    </script>
+  </body>
+</html>
