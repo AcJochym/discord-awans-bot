@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frakcyjny-bot Panel</title>
+    <title>Law Enforcement – Panel administracyjny</title>
+    <link rel="icon" href="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" />
     <meta name="color-scheme" content="dark" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,18 +13,20 @@
   </head>
   <body>
     <div class="dashboard-shell">
-      <header class="topbar">
+      <header class="topbar hero">
+        <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" onerror="this.remove()" />
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true"></span>
+          <img class="brand-logo" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" alt="Law Enforcement" onerror="this.remove()" />
           <div>
             <h1>Panel administracyjny</h1>
-            <p class="subtitle">frakcyjny-bot</p>
+            <p class="subtitle">Law Enforcement</p>
           </div>
         </div>
         <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
       </header>
 
       <nav class="tabs" aria-label="Zakładki dashboardu">
+        <span class="tab-glider" aria-hidden="true"></span>
         <button class="tab active" data-tab="overview">Status</button>
         <button class="tab" data-tab="servers">Serwery</button>
         <button class="tab" data-tab="logs">Logi</button>
@@ -171,8 +174,36 @@
       });
 
       const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let animateLists = true;
+      let lastDetailId = null;
       let selectedGuildId = null;
       const guildNameMap = new Map();
+
+      const glider = document.querySelector('.tab-glider');
+      function moveGlider() {
+        const active = document.querySelector('.tab.active');
+        if (!active || !glider) return;
+        glider.style.width = `${active.offsetWidth}px`;
+        glider.style.transform = `translateX(${active.offsetLeft}px)`;
+      }
+      window.addEventListener('resize', moveGlider);
+      window.addEventListener('load', moveGlider);
+      if (document.fonts) document.fonts.ready.then(moveGlider);
+
+      function setNum(el, value) {
+        const to = Number(value) || 0;
+        const from = Number(el.dataset.v || 0);
+        el.dataset.v = to;
+        if (reduceMotion || from === to) { el.textContent = String(to); return; }
+        const start = performance.now();
+        const tick = (now) => {
+          const t = Math.min((now - start) / 900, 1);
+          el.textContent = String(Math.round(from + (to - from) * (1 - Math.pow(1 - t, 3))));
+          if (t < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }
 
       function setActiveTab(tabName) {
         tabButtons.forEach((button) => {
@@ -182,6 +213,7 @@
         tabPanels.forEach((panel) => {
           panel.classList.toggle('active', panel.id === `${tabName}Tab`);
         });
+        moveGlider();
       }
 
       tabButtons.forEach((button) => {
@@ -201,9 +233,10 @@
         return new Date(value).toLocaleString('pl-PL');
       }
 
-      function renderLogItem(entry) {
+      function renderLogItem(entry, index = 0) {
         const item = document.createElement('div');
         item.className = `log-item level-${entry.level || 'info'}`;
+        if (animateLists) { item.classList.add('enter'); item.style.setProperty('--i', Math.min(index, 12)); }
 
         const guildName = entry.guildId ? guildNameMap.get(entry.guildId) : null;
         const roomLabel = entry.source === 'server'
@@ -240,11 +273,11 @@
         statusTextChip.textContent = 'Działa';
         statusTextChip.className = 'tiny-pill online';
         uptimeText.textContent = formatUptime(data.uptimeSeconds);
-        guildsText.textContent = String(data.totalServers);
-        ticketServersText.textContent = String(data.ticketServers);
-        webhookServersText.textContent = String(data.webhookServers);
-        botLogsText.textContent = String(data.botLogs || 0);
-        serverLogsText.textContent = String(data.serverLogs || 0);
+        setNum(guildsText, data.totalServers);
+        setNum(ticketServersText, data.ticketServers);
+        setNum(webhookServersText, data.webhookServers);
+        setNum(botLogsText, data.botLogs);
+        setNum(serverLogsText, data.serverLogs);
         updatedAt.textContent = `${formatTimestamp(data.lastUpdated)}`;
         logsUpdatedAt.textContent = `${formatTimestamp(data.lastUpdated)}`;
         serversUpdatedAt.textContent = `${formatTimestamp(data.lastUpdated)}`;
@@ -268,10 +301,11 @@
           guildNameMap.set(guild.id, guild.name);
         });
 
-        data.guilds.forEach((guild) => {
+        data.guilds.forEach((guild, index) => {
           const item = document.createElement('button');
           item.type = 'button';
-          item.className = `guild-item${selectedGuildId === guild.id ? ' active' : ''}`;
+          if (animateLists) { item.classList.add('enter'); item.style.setProperty('--i', Math.min(index, 12)); }
+          item.className = `guild-item${selectedGuildId === guild.id ? ' active' : ''}${animateLists ? ' enter' : ''}`;
           item.innerHTML = `
             <div class="guild-main">
               <span class="guild-name">${esc(guild.name)}</span>
@@ -302,6 +336,12 @@
 
       function renderServerDetails(guild) {
         const stats = guild.stats || {};
+        if (lastDetailId !== guild.id) {
+          serverDetails.classList.remove('swap');
+          void serverDetails.offsetWidth;
+          serverDetails.classList.add('swap');
+          lastDetailId = guild.id;
+        }
         serverDetails.innerHTML = `
           <div class="details-header">
             <div>
@@ -363,13 +403,13 @@
         if (botLogs.length === 0) {
           botLogsContainer.innerHTML = '<div class="empty">Brak logów systemowych.</div>';
         } else {
-          botLogs.forEach((entry) => botLogsContainer.appendChild(renderLogItem(entry)));
+          botLogs.forEach((entry, i) => botLogsContainer.appendChild(renderLogItem(entry, i)));
         }
 
         if (serverLogs.length === 0) {
           serverLogsContainer.innerHTML = '<div class="empty">Brak logów serwerów.</div>';
         } else {
-          serverLogs.forEach((entry) => serverLogsContainer.appendChild(renderLogItem(entry)));
+          serverLogs.forEach((entry, i) => serverLogsContainer.appendChild(renderLogItem(entry, i)));
         }
       }
 
@@ -378,7 +418,7 @@
       }
 
       setActiveTab('overview');
-      refreshDashboard();
+      refreshDashboard().then(() => { animateLists = false; });
       setInterval(refreshDashboard, 15000);
     </script>
   </body>
