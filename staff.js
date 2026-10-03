@@ -18,7 +18,7 @@ export const STAFF_GROUPS = [
 const STAFF_GUILD_ID = (process.env.STAFF_GUILD_ID || '1344364720605499442').trim();
 
 // Role grup dla serwera — używane, gdy w konfiguracji serwera nie ma "STAFF_ROLES".
-const DEFAULT_STAFF_ROLES = {
+export const DEFAULT_STAFF_ROLES = {
   '1344364720605499442': {
     HIGH_COMMAND: ['1505571491180314956'],
     COMMAND: ['1344373183079256064'],
