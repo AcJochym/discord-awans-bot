@@ -825,9 +825,16 @@ app.post('/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+function requireBotOwner(req, res, next) {
+  if (!BOT_OWNER_ID || req.dashUser?.id !== BOT_OWNER_ID) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  next();
+}
+
 app.get('/api/me', requireDashboardAuth, (req, res) => {
   const { id, name, avatar } = req.dashUser;
-  res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar) });
+  res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar), isBotOwner: Boolean(BOT_OWNER_ID && id === BOT_OWNER_ID) });
 });
 
 app.get('/api/presence', requireDashboardAuth, (req, res) => {
@@ -971,7 +978,7 @@ app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   }
 });
 
-app.get('/api/config/:guildId', requireDashboardAuth, (req, res) => {
+app.get('/api/config/:guildId', requireDashboardAuth, requireBotOwner, (req, res) => {
   const guildId = String(req.params.guildId);
   if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
   res.json({
@@ -983,7 +990,7 @@ app.get('/api/config/:guildId', requireDashboardAuth, (req, res) => {
   });
 });
 
-app.put('/api/config/:guildId', requireDashboardAuth, express.json({ limit: '100kb' }), async (req, res) => {
+app.put('/api/config/:guildId', requireDashboardAuth, requireBotOwner, express.json({ limit: '100kb' }), async (req, res) => {
   const guildId = String(req.params.guildId);
   if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
   if (storageMode() !== 'postgres') {
