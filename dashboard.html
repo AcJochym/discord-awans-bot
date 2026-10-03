@@ -55,6 +55,7 @@
         <button class="tab active" data-tab="overview">Status</button>
         <button class="tab" data-tab="servers">Serwery</button>
         <button class="tab" data-tab="logs">Logi</button>
+        <button class="tab" data-tab="config">Konfiguracja</button>
       </nav>
 
       <main id="overviewTab" class="tab-panel active">
@@ -147,6 +148,29 @@
           <aside id="serverDetails" class="glass-card server-details">
             <div class="empty-state">Wybierz serwer, aby zobaczyć statystyki.</div>
           </aside>
+        </div>
+      </section>
+
+      <section id="configTab" class="tab-panel">
+        <div class="glass-card config-editor">
+          <div class="panel-header">
+            <div>
+              <h2>Konfiguracja serwera</h2>
+              <p class="muted">Zmiany są zapisywane w PostgreSQL i działają od razu.</p>
+            </div>
+            <label class="config-server-label" for="configGuild">Serwer</label>
+            <select id="configGuild" class="staff-guild" aria-label="Serwer konfiguracji"></select>
+          </div>
+          <p class="config-note">Wartości poufne są maskowane i szyfrowane w bazie. Pozostaw <code>[KEEP_EXISTING_SECRET]</code>, aby zachować wartość, wpisz nową, by ją zmienić, lub wyczyść pole, aby ją usunąć.</p>
+          <label class="filter-label" for="configJson">Ustawienia JSON</label>
+          <textarea id="configJson" class="config-json" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="configStatus"></textarea>
+          <div class="config-actions">
+            <span id="configStatus" class="config-message" role="status" aria-live="polite">Wczytaj konfigurację serwera.</span>
+            <div>
+              <button type="button" id="reloadConfig" class="ghost-btn">Wczytaj ponownie</button>
+              <button type="button" id="saveConfig" class="ghost-btn config-save">Zapisz konfigurację</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -315,6 +339,7 @@
           panel.classList.toggle('active', panel.id === `${tabName}Tab`);
         });
         moveGlider();
+        if (tabName === 'config') loadConfigTab();
       }
 
       tabButtons.forEach((button) => {
@@ -357,8 +382,8 @@
         return item;
       }
 
-      async function apiFetch(url) {
-        const response = await fetch(url, { credentials: 'same-origin' });
+      async function apiFetch(url, options = {}) {
+        const response = await fetch(url, { credentials: 'same-origin', ...options });
         if (response.status === 401) {
           location.href = '/login';
           throw new Error('unauthorized');
@@ -596,6 +621,92 @@
       }
 
       staffGuildSel.addEventListener('change', () => { staffGuild = staffGuildSel.value; staffSig = ''; staffFirst = true; loadStaff(); });
+
+      /* --- Konfiguracja serwerów --- */
+      const configGuildSel = document.getElementById('configGuild');
+      const configJson = document.getElementById('configJson');
+      const configStatus = document.getElementById('configStatus');
+      const saveConfigBtn = document.getElementById('saveConfig');
+      let configTabLoading = false;
+
+      function setConfigStatus(message, state = '') {
+        configStatus.textContent = message;
+        configStatus.className = `config-message${state ? ` ${state}` : ''}`;
+      }
+
+      async function loadSelectedConfig() {
+        const guildId = configGuildSel.value;
+        if (!guildId) return;
+        configJson.disabled = true;
+        saveConfigBtn.disabled = true;
+        setConfigStatus('Wczytywanie konfiguracji…');
+        try {
+          const response = await apiFetch(`/api/config/${encodeURIComponent(guildId)}`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wczytać konfiguracji.');
+          configJson.value = JSON.stringify(data.config, null, 2);
+          configJson.disabled = false;
+          saveConfigBtn.disabled = !data.databaseAvailable;
+          setConfigStatus(data.databaseAvailable
+            ? (data.saved ? 'Zapisano w PostgreSQL.' : 'Ustawienia bazowe. Zapis utworzy wpis w PostgreSQL.')
+            : 'Brak połączenia z PostgreSQL. Zapis konfiguracji jest niedostępny.', data.databaseAvailable ? '' : 'error');
+        } catch (error) {
+          setConfigStatus(error.message, 'error');
+        }
+      }
+
+      async function loadConfigTab() {
+        if (configTabLoading) return;
+        configTabLoading = true;
+        try {
+          if (!configGuildSel.options.length) {
+            const response = await apiFetch('/api/servers');
+            const data = await response.json();
+            if (!response.ok || !data.ok || !Array.isArray(data.guilds)) throw new Error(data.error || 'Nie udało się pobrać serwerów.');
+            configGuildSel.replaceChildren(...data.guilds.map((guild) => new Option(`${guild.name} (${guild.id})`, guild.id)));
+            if (!data.guilds.length) {
+              configJson.disabled = true;
+              saveConfigBtn.disabled = true;
+              setConfigStatus('Brak skonfigurowanych serwerów.', 'error');
+              return;
+            }
+          }
+          await loadSelectedConfig();
+        } catch (error) {
+          setConfigStatus(error.message, 'error');
+        } finally {
+          configTabLoading = false;
+        }
+      }
+
+      configGuildSel.addEventListener('change', loadSelectedConfig);
+      document.getElementById('reloadConfig').addEventListener('click', loadSelectedConfig);
+      saveConfigBtn.addEventListener('click', async () => {
+        let config;
+        try {
+          config = JSON.parse(configJson.value);
+        } catch (error) {
+          setConfigStatus(`Nieprawidłowy JSON: ${error.message}`, 'error');
+          return;
+        }
+        saveConfigBtn.disabled = true;
+        setConfigStatus('Zapisywanie…');
+        try {
+          const response = await apiFetch(`/api/config/${encodeURIComponent(configGuildSel.value)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config })
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się zapisać konfiguracji.');
+          configJson.value = JSON.stringify(data.config, null, 2);
+          setConfigStatus('Konfiguracja zapisana w PostgreSQL i zastosowana.', 'success');
+        } catch (error) {
+          setConfigStatus(error.message, 'error');
+        } finally {
+          saveConfigBtn.disabled = false;
+        }
+      });
 
       /* Popup profilu */
       const modal = document.getElementById('profileModal');
