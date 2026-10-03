@@ -14,12 +14,26 @@ export const STAFF_GROUPS = [
   { key: 'ftd', label: 'FTD' }
 ];
 
+// Lista administracji pokazuje tylko ten serwer (można nadpisać zmienną STAFF_GUILD_ID).
+const STAFF_GUILD_ID = (process.env.STAFF_GUILD_ID || '1344364720605499442').trim();
+
+// Role grup dla serwera — używane, gdy w konfiguracji serwera nie ma "STAFF_ROLES".
+const DEFAULT_STAFF_ROLES = {
+  '1344364720605499442': {
+    HIGH_COMMAND: ['1505571491180314956'],
+    COMMAND: ['1344373183079256064'],
+    MEDIUM_COMMAND: ['1344664019751014543'],
+    COMMAND_FTD: ['1344370783769722933'],
+    FTD: ['1344370800354136164']
+  }
+};
+
 const isId = (v) => /^\d{5,25}$/.test(String(v));
 const ids = (arr) => (Array.isArray(arr) ? arr.map(String).filter(isId) : []);
 
 // Role grup: z "STAFF_ROLES" w konfiguracji serwera, a gdy ich brak — wyprowadzone z konfiguracji ticketów.
-export function staffRoleIds(cfg = {}) {
-  const manual = cfg.STAFF_ROLES || {};
+export function staffRoleIds(cfg = {}, guildId = '') {
+  const manual = cfg.STAFF_ROLES || DEFAULT_STAFF_ROLES[guildId] || {};
   const cmd = cfg.TICKETS?.COMMAND?.TYPES || [];
   const ftd = cfg.TICKETS?.FTD?.TYPES || [];
   const of = (types, id) => ids(types.find((t) => t.ID === id)?.SUPPORT_ROLE_IDS);
@@ -66,7 +80,7 @@ const hex = (n) => (n ? `#${n.toString(16).padStart(6, '0')}` : null);
 async function load(guildId, cfg, getGuildInfo) {
   const [members, roles, info] = await Promise.all([allMembers(guildId), api(`/guilds/${guildId}/roles`), getGuildInfo(guildId, true)]);
   const roleMap = new Map(roles.map((r) => [r.id, r]));
-  const groupRoles = staffRoleIds(cfg);
+  const groupRoles = staffRoleIds(cfg, guildId);
   const staffIds = new Set(Object.values(groupRoles).flat());
   const groups = STAFF_GROUPS.map((g) => ({ key: g.key, label: g.label, members: [] }));
 
@@ -98,8 +112,9 @@ async function load(guildId, cfg, getGuildInfo) {
 }
 
 export async function getStaff(serverConfigs, requestedId, getGuildInfo) {
-  const ordered = Object.entries(serverConfigs)
-    .map(([id, cfg]) => ({ id, cfg, score: new Set(Object.values(staffRoleIds(cfg)).flat()).size }))
+  const entries = serverConfigs[STAFF_GUILD_ID] ? [[STAFF_GUILD_ID, serverConfigs[STAFF_GUILD_ID]]] : Object.entries(serverConfigs);
+  const ordered = entries
+    .map(([id, cfg]) => ({ id, cfg, score: new Set(Object.values(staffRoleIds(cfg, id)).flat()).size }))
     .sort((a, b) => b.score - a.score); // serwery z najbardziej zróżnicowanymi rolami na górze (domyślny wybór)
   if (!ordered.length) throw Object.assign(new Error('Brak serwerów w konfiguracji'), { guilds: [] });
 
