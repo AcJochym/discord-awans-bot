@@ -358,7 +358,7 @@ h3 { margin: 0; font-size: 1.5rem; font-weight: 700; }
 @keyframes toastBar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
 /* Filtry logów */
-.filter-bar { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end; padding: 18px 22px; margin-bottom: 18px; overflow: visible; }
+.filter-bar { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end; padding: 18px 22px; margin-bottom: 18px; }
 .filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .filter-group[hidden] { display: none; }
 .filter-group.grow { flex: 1 1 200px; flex-direction: column; align-items: stretch; }
@@ -411,7 +411,7 @@ h3 { margin: 0; font-size: 1.5rem; font-weight: 700; }
 .plot { position: relative; height: 190px; padding-left: 30px; border-bottom: 1px solid var(--edge); }
 .ymax { position: absolute; left: 0; top: 0; color: var(--muted); font-size: 0.72rem; }
 .cols { display: flex; align-items: flex-end; gap: 3px; height: 100%; border-top: 1px dashed rgba(255, 255, 255, 0.12); }
-.col { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column-reverse; justify-content: flex-start; border-radius: 4px 4px 0 0; overflow: hidden; transition: filter 0.2s; }
+.col { background: rgba(255, 255, 255, 0.04); flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column-reverse; justify-content: flex-start; border-radius: 4px 4px 0 0; overflow: hidden; transition: filter 0.2s; }
 .col:hover { filter: brightness(1.35); }
 .seg { display: block; width: 100%; transform-origin: bottom; animation: growY 0.7s calc(var(--i, 0) * 14ms) cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes growY { from { transform: scaleY(0); } to { transform: scaleY(1); } }
@@ -436,3 +436,8 @@ button.hbar:hover { background: rgba(255, 255, 255, 0.1); }
   .filter-group.actions { margin-left: 0; }
 }
 @media (max-width: 560px) { .plot { height: 150px; } .hbar { grid-template-columns: 1fr auto; } .hb-track { grid-column: 1 / -1; order: 3; } }
+
+/* Odświeżanie w tle bez ponownych animacji */
+.static .kpi, .static .seg, .static .hbar, .static .hb-track i { animation: none; }
+.col { transition: filter 0.2s, background 0.2s; }
+.xaxis { justify-content: space-between; }
