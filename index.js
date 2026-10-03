@@ -30,6 +30,23 @@ function loadServerConfigs() {
 }
 
 const serverConfigs = loadServerConfigs();
+const dashboardLogs = [];
+
+function addDashboardLog(level = 'info', message, meta = {}) {
+  dashboardLogs.unshift({
+    id: Date.now() + Math.random(),
+    level,
+    message,
+    timestamp: new Date().toISOString(),
+    ...meta
+  });
+
+  if (dashboardLogs.length > 100) {
+    dashboardLogs.length = 100;
+  }
+}
+
+addDashboardLog('info', 'Dashboard został uruchomiony.');
 
 const URLOP_HELP_EMBED = {
   title: "🌴 Instrukcja Systemu Urlopowego — Komenda /urlop",
@@ -447,6 +464,33 @@ app.get('/api/health', (_req, res) => {
     port: PORT,
     timestamp: new Date().toISOString()
   });
+});
+
+app.get('/api/dashboard-summary', async (_req, res) => {
+  try {
+    const serverEntries = Object.entries(serverConfigs);
+    const ticketCount = serverEntries.filter(([, cfg]) => cfg.TICKETS).length;
+    const webhookCount = serverEntries.filter(([, cfg]) => Boolean(cfg.WEBHOOK_URL)).length;
+
+    const summary = {
+      ok: true,
+      uptimeSeconds: Math.round(process.uptime()),
+      totalServers: serverEntries.length,
+      ticketServers: ticketCount,
+      webhookServers: webhookCount,
+      lastUpdated: new Date().toISOString(),
+      logsCount: dashboardLogs.length
+    };
+
+    res.json(summary);
+  } catch (error) {
+    console.error('Błąd pobierania podsumowania dashboardu:', error);
+    res.status(500).json({ ok: false, error: 'Nie udało się pobrać podsumowania.' });
+  }
+});
+
+app.get('/api/logs', (_req, res) => {
+  res.json({ ok: true, logs: dashboardLogs.slice(0, 30) });
 });
 
 app.get('/api/servers', async (_req, res) => {
@@ -981,6 +1025,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       timestamp: new Date().toISOString()
     }).catch(e => console.error('Błąd logowania komendy:', e));
 
+    addDashboardLog('info', `Użyto komendy /${name} na serwerze ${interaction.guild_id}.`, {
+      guildId: interaction.guild_id,
+      command: name
+    });
+
     return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
   }
 
@@ -992,7 +1041,11 @@ const SERVER_PORT = process.env.PORT || 8080;
 
 app.listen(SERVER_PORT, '0.0.0.0', () => {
   console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
+  addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`);
   announceUpdateToAllServers();
   discordClient.login(process.env.DISCORD_BOT_TOKEN)
-    .catch(error => console.error('Nie udało się połączyć z Discord Gateway:', error));
+    .catch(error => {
+      addDashboardLog('error', 'Nie udało się połączyć z Discord Gateway.', { error: error.message });
+      console.error('Nie udało się połączyć z Discord Gateway:', error);
+    });
 });
