@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DC Bot Panel</title>
+    <link rel="stylesheet" href="/dashboard-static/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Discord Bot</p>
+          <h1>Panel administracyjny</h1>
+        </div>
+        <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
+      </header>
+
+      <main class="grid">
+        <section class="card">
+          <span class="label">Status</span>
+          <strong id="statusText">Sprawdzam...</strong>
+        </section>
+        <section class="card">
+          <span class="label">Czas działania</span>
+          <strong id="uptimeText">--</strong>
+        </section>
+        <section class="card">
+          <span class="label">Serwery</span>
+          <strong id="guildsText">--</strong>
+        </section>
+      </main>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Lista serwerów</h2>
+          <span id="updatedAt" class="muted">--</span>
+        </div>
+        <div id="guilds" class="guild-list"></div>
+      </section>
+    </div>
+
+    <script>
+      const statusBadge = document.getElementById('statusBadge');
+      const statusText = document.getElementById('statusText');
+      const uptimeText = document.getElementById('uptimeText');
+      const guildsText = document.getElementById('guildsText');
+      const updatedAt = document.getElementById('updatedAt');
+      const guildsContainer = document.getElementById('guilds');
+
+      function formatUptime(seconds) {
+        const d = Math.floor(seconds / 86400);
+        const h = Math.floor((seconds % 86400) / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        return `${d}d ${h}h ${m}m ${s}s`;
+      }
+
+      async function loadHealth() {
+        const response = await fetch('/api/health');
+        const data = await response.json();
+
+        if (!data.ok) {
+          statusBadge.textContent = 'Błąd';
+          statusBadge.className = 'status-badge error';
+          statusText.textContent = 'Nie można pobrać statusu';
+          return;
+        }
+
+        statusBadge.textContent = 'Online';
+        statusBadge.className = 'status-badge online';
+        statusText.textContent = 'Bot działa poprawnie';
+        uptimeText.textContent = formatUptime(data.uptimeSeconds);
+        guildsText.textContent = String(data.guilds);
+        updatedAt.textContent = `Aktualizacja: ${new Date(data.timestamp).toLocaleTimeString('pl-PL')}`;
+      }
+
+      async function loadServers() {
+        const response = await fetch('/api/servers');
+        const data = await response.json();
+
+        guildsContainer.innerHTML = '';
+
+        if (!data.ok || !Array.isArray(data.guilds) || data.guilds.length === 0) {
+          guildsContainer.innerHTML = '<div class="empty">Brak podłączonych serwerów.</div>';
+          return;
+        }
+
+        data.guilds.forEach((guild) => {
+          const item = document.createElement('div');
+          item.className = 'guild-item';
+          item.innerHTML = `
+            <div>
+              <h3>${guild.name}</h3>
+              <p>ID: ${guild.id}</p>
+            </div>
+            <div class="guild-meta">
+              <span>Użytkownicy: ${guild.memberCount ?? 'N/A'}</span>
+              <span>Kanały: ${guild.channels}</span>
+              <span>Tickety: ${guild.ticketsEnabled ? 'tak' : 'nie'}</span>
+              <span>Webhook: ${guild.webhookConfigured ? 'tak' : 'nie'}</span>
+            </div>
+          `;
+          guildsContainer.appendChild(item);
+        });
+      }
+
+      loadHealth();
+      loadServers();
+      setInterval(() => {
+        loadHealth();
+        loadServers();
+      }, 30000);
+    </script>
+  </body>
+</html>
