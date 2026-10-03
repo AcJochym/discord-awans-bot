@@ -138,20 +138,78 @@
       </section>
 
       <section id="logsTab" class="tab-panel">
-        <div class="log-layout">
-          <div class="glass-card log-group">
-            <div class="panel-header">
-              <h2>Logi bota</h2>
+        <div class="glass-card filter-bar">
+          <div class="filter-group">
+            <span class="filter-label">Okres</span>
+            <div class="chips" id="rangeChips" role="group" aria-label="Okres">
+              <button type="button" data-v="1h">1 godz.</button>
+              <button type="button" data-v="24h">24 godz.</button>
+              <button type="button" data-v="7d">7 dni</button>
+              <button type="button" data-v="30d">30 dni</button>
+              <button type="button" data-v="90d">90 dni</button>
+              <button type="button" data-v="all">Wszystko</button>
+              <button type="button" data-v="custom">Własny</button>
             </div>
-            <div id="botLogs" class="log-list"></div>
           </div>
+          <div class="filter-group" id="customRange" hidden>
+            <label class="filter-label" for="fromInput">Od</label>
+            <input type="datetime-local" id="fromInput" />
+            <label class="filter-label" for="toInput">Do</label>
+            <input type="datetime-local" id="toInput" />
+          </div>
+          <div class="filter-group">
+            <span class="filter-label">Źródło</span>
+            <div class="chips" id="sourceChips" role="group" aria-label="Źródło">
+              <button type="button" data-v="">Wszystkie</button>
+              <button type="button" data-v="bot">Systemowe</button>
+              <button type="button" data-v="server">Serwerowe</button>
+            </div>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="guildSelect">Serwer</label>
+            <select id="guildSelect"><option value="">Wszystkie serwery</option></select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="levelSelect">Poziom</label>
+            <select id="levelSelect">
+              <option value="">Wszystkie</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option>
+            </select>
+          </div>
+          <div class="filter-group grow">
+            <label class="filter-label" for="searchInput">Szukaj</label>
+            <input type="search" id="searchInput" placeholder="Szukaj w treści logów…" maxlength="100" />
+          </div>
+          <div class="filter-group actions">
+            <button type="button" id="resetFilters" class="ghost-btn">Wyczyść</button>
+            <a id="exportBtn" class="ghost-btn" href="#" download>Eksport CSV</a>
+          </div>
+        </div>
 
-          <div class="glass-card log-group">
-            <div class="panel-header">
-              <h2>Logi serwerów</h2>
-            </div>
-            <div id="serverLogs" class="log-list"></div>
+        <div class="kpi-row" id="kpiRow"></div>
+
+        <div class="charts-grid">
+          <div class="glass-card chart-card wide">
+            <div class="panel-header"><h2>Aktywność w czasie</h2>
+              <span class="legend"><i class="lg info"></i>info <i class="lg warn"></i>warn <i class="lg error"></i>error</span></div>
+            <div id="timelineChart" class="timeline"></div>
           </div>
+          <div class="glass-card chart-card">
+            <div class="panel-header"><h2>Najczęstsze komendy</h2></div>
+            <div id="commandsChart" class="hbars"></div>
+          </div>
+          <div class="glass-card chart-card">
+            <div class="panel-header"><h2>Aktywność serwerów</h2></div>
+            <div id="guildsChart" class="hbars"></div>
+          </div>
+        </div>
+
+        <div class="glass-card log-group">
+          <div class="panel-header">
+            <h2>Dziennik zdarzeń</h2>
+            <span><span id="logCount" class="tiny-pill"></span> <span id="storagePill" class="tiny-pill"></span></span>
+          </div>
+          <div id="logList" class="log-list"></div>
+          <button type="button" id="loadMore" class="ghost-btn load-more" hidden>Załaduj więcej</button>
         </div>
       </section>
     </div>
@@ -173,8 +231,6 @@
       const serversUpdatedAt = document.getElementById('serversUpdatedAt');
       const guildsContainer = document.getElementById('guilds');
       const serverDetails = document.getElementById('serverDetails');
-      const botLogsContainer = document.getElementById('botLogs');
-      const serverLogsContainer = document.getElementById('serverLogs');
       const systemActivityText = document.getElementById('systemActivityText');
       const serverActivityText = document.getElementById('serverActivityText');
       const tabButtons = document.querySelectorAll('.tab');
@@ -555,41 +611,167 @@
         `;
       }
 
-      async function loadLogs() {
-        const response = await apiFetch('/api/logs');
-        const data = await response.json();
+      /* --- Logi: filtry, statystyki, wykresy --- */
+      const F = { range: '24h', from: '', to: '', source: '', guild: '', level: '', q: '' };
+      const logListEl = document.getElementById('logList');
+      const loadMoreBtn = document.getElementById('loadMore');
+      const PAGE = 50;
+      let logOffset = 0;
+      let activityId = 0;
 
-        botLogsContainer.innerHTML = '';
-        serverLogsContainer.innerHTML = '';
-
-        if (!data.ok || !Array.isArray(data.logs) || data.logs.length === 0) {
-          botLogsContainer.innerHTML = '<div class="empty">Brak logów systemowych.</div>';
-          serverLogsContainer.innerHTML = '<div class="empty">Brak logów serwerów.</div>';
-          return;
+      function filterParams() {
+        const p = new URLSearchParams();
+        p.set('range', F.range);
+        if (F.range === 'custom') {
+          if (F.from) p.set('from', new Date(F.from).toISOString());
+          if (F.to) p.set('to', new Date(F.to).toISOString());
         }
+        ['source', 'guild', 'level', 'q'].forEach((k) => { if (F[k]) p.set(k, F[k]); });
+        return p;
+      }
 
-        const botLogs = data.logs.filter((entry) => entry.source === 'bot');
-        const serverLogs = data.logs.filter((entry) => entry.source === 'server');
+      function syncFilterUi() {
+        document.querySelectorAll('#rangeChips button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === F.range)));
+        document.querySelectorAll('#sourceChips button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === F.source)));
+        document.getElementById('customRange').hidden = F.range !== 'custom';
+        document.getElementById('guildSelect').value = F.guild;
+        document.getElementById('levelSelect').value = F.level;
+        document.getElementById('exportBtn').href = `/api/logs/export.csv?${filterParams()}`;
+      }
 
-        if (botLogs.length === 0) {
-          botLogsContainer.innerHTML = '<div class="empty">Brak logów systemowych.</div>';
-        } else {
-          botLogs.forEach((entry, i) => botLogsContainer.appendChild(renderLogItem(entry, i)));
+      function populateGuildSelect() {
+        const select = document.getElementById('guildSelect');
+        select.replaceChildren(new Option('Wszystkie serwery', ''));
+        guildNameMap.forEach((name, id) => select.appendChild(new Option(name, id)));
+        select.value = F.guild;
+      }
+
+      const guildLabel = (id) => guildNameMap.get(id) || id;
+
+      function renderKpis(t) {
+        const items = [['Zdarzeń', t.total, ''], ['Komend', t.commands, ''], ['Ostrzeżeń', t.warn, 'warn'], ['Błędów', t.error, 'error']];
+        document.getElementById('kpiRow').innerHTML = items.map(([label, value, cls], i) =>
+          `<div class="glass-card kpi ${cls}" style="--i:${i}"><span class="label">${label}</span><strong>${fmtNum(value)}</strong></div>`).join('');
+      }
+
+      function bucketLabel(ms, step, spanDays) {
+        const d = new Date(ms);
+        if (step >= 86400) return d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+        const time = d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+        return spanDays > 1 ? `${d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} ${time}` : time;
+      }
+
+      function renderTimeline(data) {
+        const el = document.getElementById('timelineChart');
+        const max = Math.max(1, ...data.timeline.map((b) => b.info + b.warn + b.error));
+        if (!data.totals.total) { el.innerHTML = '<div class="empty">Brak zdarzeń w wybranym okresie.</div>'; return; }
+        const spanDays = (data.timeline.at(-1).t - data.timeline[0].t) / 864e5;
+        const cols = data.timeline.map((b, i) => {
+          const total = b.info + b.warn + b.error;
+          const seg = (n, cls) => (n ? `<i class="seg ${cls}" style="height:${(n / max) * 100}%"></i>` : '');
+          const tip = `${bucketLabel(b.t, data.step, spanDays)} — ${total} (info ${b.info}, warn ${b.warn}, error ${b.error})`;
+          return `<div class="col" title="${esc(tip)}" style="--i:${i}">${seg(b.error, 'error')}${seg(b.warn, 'warn')}${seg(b.info, 'info')}</div>`;
+        }).join('');
+        const first = bucketLabel(data.timeline[0].t, data.step, spanDays);
+        const last = bucketLabel(data.timeline.at(-1).t, data.step, spanDays);
+        el.innerHTML = `<div class="plot"><span class="ymax">${max}</span><div class="cols">${cols}</div></div><div class="xaxis"><span>${esc(first)}</span><span>${esc(last)}</span></div>`;
+      }
+
+      function renderHBars(elId, items, labelOf, onClick) {
+        const el = document.getElementById(elId);
+        if (!items.length) { el.innerHTML = '<div class="empty">Brak danych.</div>'; return; }
+        const max = Math.max(...items.map((x) => x.count));
+        el.replaceChildren(...items.map((x, i) => {
+          const row = document.createElement(onClick ? 'button' : 'div');
+          row.className = 'hbar';
+          row.style.setProperty('--i', i);
+          if (onClick) { row.type = 'button'; row.addEventListener('click', () => onClick(x)); }
+          row.innerHTML = `<span class="hb-label">${esc(labelOf(x))}</span><span class="hb-track"><i style="width:${(x.count / max) * 100}%"></i></span><span class="hb-val">${fmtNum(x.count)}</span>`;
+          return row;
+        }));
+      }
+
+      async function loadPage(reset, animate = true) {
+        if (reset) { logOffset = 0; logListEl.replaceChildren(); }
+        const p = filterParams();
+        p.set('limit', PAGE);
+        p.set('offset', logOffset);
+        const data = await (await apiFetch(`/api/logs?${p}`)).json();
+        if (!data.ok) return null;
+        data.logs.forEach((entry, i) => {
+          const item = renderLogItem(entry, i);
+          if (animate) item.classList.add('enter');
+          logListEl.appendChild(item);
+        });
+        logOffset += data.logs.length;
+        if (!logListEl.children.length) logListEl.innerHTML = '<div class="empty">Brak logów dla wybranych filtrów.</div>';
+        loadMoreBtn.hidden = !data.hasMore;
+        document.getElementById('logCount').textContent = `${fmtNum(data.total)} wpisów`;
+        const pill = document.getElementById('storagePill');
+        pill.textContent = data.storage === 'postgres' ? 'Baza: PostgreSQL' : 'Pamięć (tymczasowa)';
+        pill.className = `tiny-pill ${data.storage === 'postgres' ? 'online' : 'error'}`;
+        return data;
+      }
+
+      async function reloadActivity(silent = false) {
+        const id = ++activityId;
+        syncFilterUi();
+        const tz = -new Date().getTimezoneOffset() * 60;
+        const [stats] = await Promise.all([
+          apiFetch(`/api/logs/stats?${filterParams()}&tz=${tz}`).then((r) => r.json()),
+          loadPage(true, !silent)
+        ]);
+        if (id !== activityId || !stats.ok) return;
+        renderKpis(stats.totals);
+        renderTimeline(stats);
+        renderHBars('commandsChart', stats.commands, (x) => `/${x.command}`);
+        renderHBars('guildsChart', stats.guilds, (x) => guildLabel(x.guildId), (x) => { F.guild = x.guildId; reloadActivity(); });
+      }
+
+      function setFilter(key, value) { F[key] = value; reloadActivity(); }
+
+      document.getElementById('rangeChips').addEventListener('click', (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.dataset.v === 'custom' && !F.from) {
+          const now = new Date(); const day = new Date(now - 864e5);
+          const local = (d) => new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+          F.from = local(day); F.to = local(now);
+          document.getElementById('fromInput').value = F.from;
+          document.getElementById('toInput').value = F.to;
         }
+        setFilter('range', b.dataset.v);
+      });
+      document.getElementById('sourceChips').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setFilter('source', b.dataset.v); });
+      document.getElementById('guildSelect').addEventListener('change', (e) => setFilter('guild', e.target.value));
+      document.getElementById('levelSelect').addEventListener('change', (e) => setFilter('level', e.target.value));
+      document.getElementById('fromInput').addEventListener('change', (e) => setFilter('from', e.target.value));
+      document.getElementById('toInput').addEventListener('change', (e) => setFilter('to', e.target.value));
+      let searchTimer;
+      document.getElementById('searchInput').addEventListener('input', (e) => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => setFilter('q', e.target.value.trim()), 350);
+      });
+      document.getElementById('resetFilters').addEventListener('click', () => {
+        Object.assign(F, { range: '24h', from: '', to: '', source: '', guild: '', level: '', q: '' });
+        document.getElementById('searchInput').value = '';
+        reloadActivity();
+      });
+      loadMoreBtn.addEventListener('click', async () => { loadMoreBtn.disabled = true; try { await loadPage(false); } finally { loadMoreBtn.disabled = false; } });
 
-        if (serverLogs.length === 0) {
-          serverLogsContainer.innerHTML = '<div class="empty">Brak logów serwerów.</div>';
-        } else {
-          serverLogs.forEach((entry, i) => serverLogsContainer.appendChild(renderLogItem(entry, i)));
-        }
+      // Odświeżanie w tle co 15 s, tylko gdy zakładka jest otwarta i nie doładowano starszych wpisów
+      function refreshActivityIfIdle() {
+        if (document.getElementById('logsTab').classList.contains('active') && logOffset <= PAGE) reloadActivity(true).catch(() => {});
       }
 
       async function refreshDashboard() {
-        await Promise.all([loadSummary(), loadServers(), loadLogs()]);
+        await Promise.all([loadSummary(), loadServers()]);
+        populateGuildSelect();
+        refreshActivityIfIdle();
       }
 
       setActiveTab('overview');
       loadMe();
+      reloadActivity();
       pollPresence();
       setInterval(pollPresence, 5000);
       refreshDashboard().then(() => { animateLists = false; });
