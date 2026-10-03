@@ -5,6 +5,7 @@ import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'd
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
+import { initLogStore, addLog, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -31,21 +32,10 @@ function loadServerConfigs() {
 }
 
 const serverConfigs = loadServerConfigs();
-const dashboardLogs = [];
+initLogStore();
 
 function addDashboardLog(level = 'info', message, meta = {}) {
-  dashboardLogs.unshift({
-    id: Date.now() + Math.random(),
-    level,
-    source: meta.source || 'bot',
-    message,
-    timestamp: new Date().toISOString(),
-    ...meta
-  });
-
-  if (dashboardLogs.length > 200) {
-    dashboardLogs.length = 200;
-  }
+  addLog(level, message, meta);
 }
 
 addDashboardLog('info', 'Dashboard został uruchomiony.', { source: 'bot' });
@@ -685,8 +675,9 @@ app.get('/api/dashboard-summary', requireDashboardAuth, async (_req, res) => {
     const serverEntries = Object.entries(serverConfigs);
     const ticketCount = serverEntries.filter(([, cfg]) => cfg.TICKETS).length;
     const webhookCount = serverEntries.filter(([, cfg]) => Boolean(cfg.WEBHOOK_URL)).length;
-    const botLogs = dashboardLogs.filter((log) => log.source === 'bot').length;
-    const serverLogs = dashboardLogs.filter((log) => log.source === 'server').length;
+    const counts = await countBySource();
+    const botLogs = counts.bot;
+    const serverLogs = counts.server;
 
     const summary = {
       ok: true,
@@ -697,7 +688,8 @@ app.get('/api/dashboard-summary', requireDashboardAuth, async (_req, res) => {
       botLogs,
       serverLogs,
       lastUpdated: new Date().toISOString(),
-      logsCount: dashboardLogs.length
+      logsCount: botLogs + serverLogs,
+      storage: storageMode()
     };
 
     res.json(summary);
@@ -707,17 +699,47 @@ app.get('/api/dashboard-summary', requireDashboardAuth, async (_req, res) => {
   }
 });
 
-app.get('/api/logs', requireDashboardAuth, (_req, res) => {
-  res.json({ ok: true, logs: dashboardLogs.slice(0, 80) });
+app.get('/api/logs', requireDashboardAuth, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
+    const offset = Math.max(Number.parseInt(req.query.offset, 10) || 0, 0);
+    const { logs, total } = await queryLogs(parseFilters(req.query), { limit, offset });
+    res.json({ ok: true, logs, total, hasMore: offset + logs.length < total, storage: storageMode() });
+  } catch (error) {
+    console.error('Błąd pobierania logów:', error.message);
+    res.status(500).json({ ok: false, error: 'Nie udało się pobrać logów.' });
+  }
+});
+
+app.get('/api/logs/stats', requireDashboardAuth, async (req, res) => {
+  try {
+    const tz = Math.max(-50400, Math.min(50400, Math.round(Number(req.query.tz) || 0)));
+    res.json({ ok: true, storage: storageMode(), ...(await getStats(parseFilters(req.query), tz)) });
+  } catch (error) {
+    console.error('Błąd statystyk logów:', error.message);
+    res.status(500).json({ ok: false, error: 'Nie udało się policzyć statystyk.' });
+  }
+});
+
+app.get('/api/logs/export.csv', requireDashboardAuth, async (req, res) => {
+  try {
+    const csv = await exportCsv(parseFilters(req.query));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="logi-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  } catch (error) {
+    console.error('Błąd eksportu logów:', error.message);
+    res.status(500).send('Nie udało się wyeksportować logów.');
+  }
 });
 
 app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   try {
     const guilds = [];
+    const summaries = await guildSummaries();
     for (const [guildId, cfg] of Object.entries(serverConfigs)) {
       const guildInfo = await getGuildInfo(guildId, true);
-      const guildLogs = dashboardLogs.filter((log) => log.guildId === guildId);
-      const commandCount = guildLogs.filter((log) => log.command).length;
+      const sum = summaries.get(guildId) || { total: 0, commands: 0, lastEvent: null, errors24h: 0 };
       guilds.push({
         id: guildId,
         name: guildInfo?.name || 'Nieznany serwer',
@@ -726,10 +748,10 @@ app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
         ticketsEnabled: Boolean(cfg.TICKETS),
         webhookConfigured: Boolean(cfg.WEBHOOK_URL),
         stats: {
-          totalEvents: guildLogs.length,
-          commandCount,
-          lastEvent: guildLogs[0]?.timestamp || null,
-          status: guildLogs.some((log) => log.level === 'error') ? 'warning' : 'online'
+          totalEvents: sum.total,
+          commandCount: sum.commands,
+          lastEvent: sum.lastEvent,
+          status: sum.errors24h > 0 ? 'warning' : 'online'
         }
       });
     }
