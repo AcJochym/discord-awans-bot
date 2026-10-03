@@ -2,12 +2,10 @@ import express from 'express';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
-import path from 'node:path';
 import { handleTicketInteraction } from './tickets.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const ROOT_DIR = process.cwd();
 
 
 
@@ -429,10 +427,170 @@ function parseStrictDate(value) {
   return date;
 }
 
-app.use('/dashboard-static', express.static(path.join(ROOT_DIR, 'public')));
-
 app.get('/dashboard', (_req, res) => {
-  res.sendFile(path.join(ROOT_DIR, 'public', 'dashboard.html'));
+  res.type('html').send(`<!DOCTYPE html>
+    <html lang="pl">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DC Bot Panel</title>
+        <style>
+          :root {
+            --bg: #0f172a;
+            --panel: #111827;
+            --panel-alt: #1f2937;
+            --accent: #22c55e;
+            --accent-2: #60a5fa;
+            --text: #e5e7eb;
+            --muted: #94a3b8;
+            --danger: #f87171;
+            --border: rgba(148, 163, 184, 0.2);
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            font-family: Inter, "Segoe UI", sans-serif;
+            background: linear-gradient(180deg, #020817 0%, #0f172a 100%);
+            color: var(--text);
+          }
+          .container { max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
+          .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
+          .eyebrow { margin: 0 0 8px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem; font-weight: 700; }
+          h1 { margin: 0; font-size: clamp(2rem, 4vw, 3rem); }
+          h2 { margin: 0; }
+          h3 { margin: 0 0 8px; font-size: 1.1rem; }
+          .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 18px; margin-bottom: 28px; }
+          .card, .panel { background: rgba(17, 24, 39, 0.9); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 18px 40px rgba(2, 6, 23, 0.3); }
+          .card { padding: 18px 20px; }
+          .label { display: block; color: var(--muted); font-size: 0.8rem; margin-bottom: 10px; }
+          .card strong { font-size: clamp(1.2rem, 2vw, 1.8rem); }
+          .status-badge {
+            display: inline-flex; align-items: center; justify-content: center; min-width: 110px; padding: 8px 12px; border-radius: 999px;
+            font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em;
+          }
+          .status-badge.loading { background: rgba(96, 165, 250, 0.15); color: var(--accent-2); }
+          .status-badge.online { background: rgba(34, 197, 94, 0.15); color: var(--accent); }
+          .status-badge.error { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
+          .panel { padding: 20px; }
+          .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+          .muted { color: var(--muted); font-size: 0.8rem; }
+          .guild-list { display: flex; flex-direction: column; gap: 12px; }
+          .guild-item { display: flex; justify-content: space-between; align-items: center; gap: 18px; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+          .guild-item p { margin: 4px 0 0; color: var(--muted); font-size: 0.8rem; }
+          .guild-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 12px; color: var(--muted); font-size: 0.8rem; }
+          .empty { padding: 20px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; }
+          @media (max-width: 640px) {
+            .topbar, .guild-item, .panel-header { flex-direction: column; align-items: flex-start; }
+            .guild-meta { justify-content: flex-start; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Discord Bot</p>
+              <h1>Panel administracyjny</h1>
+            </div>
+            <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
+          </header>
+
+          <main class="grid">
+            <section class="card">
+              <span class="label">Status</span>
+              <strong id="statusText">Sprawdzam...</strong>
+            </section>
+            <section class="card">
+              <span class="label">Czas działania</span>
+              <strong id="uptimeText">--</strong>
+            </section>
+            <section class="card">
+              <span class="label">Serwery</span>
+              <strong id="guildsText">--</strong>
+            </section>
+          </main>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Lista serwerów</h2>
+              <span id="updatedAt" class="muted">--</span>
+            </div>
+            <div id="guilds" class="guild-list"></div>
+          </section>
+        </div>
+
+        <script>
+          const statusBadge = document.getElementById('statusBadge');
+          const statusText = document.getElementById('statusText');
+          const uptimeText = document.getElementById('uptimeText');
+          const guildsText = document.getElementById('guildsText');
+          const updatedAt = document.getElementById('updatedAt');
+          const guildsContainer = document.getElementById('guilds');
+
+          function formatUptime(seconds) {
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${d}d ${h}h ${m}m ${s}s`;
+          }
+
+          async function loadHealth() {
+            const response = await fetch('/api/health');
+            const data = await response.json();
+
+            if (!data.ok) {
+              statusBadge.textContent = 'Błąd';
+              statusBadge.className = 'status-badge error';
+              statusText.textContent = 'Nie można pobrać statusu';
+              return;
+            }
+
+            statusBadge.textContent = 'Online';
+            statusBadge.className = 'status-badge online';
+            statusText.textContent = 'Bot działa poprawnie';
+            uptimeText.textContent = formatUptime(data.uptimeSeconds);
+            guildsText.textContent = String(data.guilds);
+            updatedAt.textContent = `Aktualizacja: ${new Date(data.timestamp).toLocaleTimeString('pl-PL')}`;
+          }
+
+          async function loadServers() {
+            const response = await fetch('/api/servers');
+            const data = await response.json();
+
+            guildsContainer.innerHTML = '';
+
+            if (!data.ok || !Array.isArray(data.guilds) || data.guilds.length === 0) {
+              guildsContainer.innerHTML = '<div class="empty">Brak podłączonych serwerów.</div>';
+              return;
+            }
+
+            data.guilds.forEach((guild) => {
+              const item = document.createElement('div');
+              item.className = 'guild-item';
+              item.innerHTML = `
+                <div>
+                  <h3>${guild.name}</h3>
+                  <p>ID: ${guild.id}</p>
+                </div>
+                <div class="guild-meta">
+                  <span>Użytkownicy: ${guild.memberCount ?? 'N/A'}</span>
+                  <span>Kanały: ${guild.channels}</span>
+                  <span>Tickety: ${guild.ticketsEnabled ? 'tak' : 'nie'}</span>
+                  <span>Webhook: ${guild.webhookConfigured ? 'tak' : 'nie'}</span>
+                </div>
+              `;
+              guildsContainer.appendChild(item);
+            });
+          }
+
+          loadHealth();
+          loadServers();
+          setInterval(() => { loadHealth(); loadServers(); }, 30000);
+        </script>
+      </body>
+    </html>
+  `);
 });
 
 app.get('/api/health', (_req, res) => {
