@@ -5,7 +5,7 @@ import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'd
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
-import { getStaff } from './staff.js';
+import { DEFAULT_STAFF_ROLES, getStaff } from './staff.js';
 import { initLogStore, addLog, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
 
 const app = express();
@@ -467,7 +467,9 @@ if (!DASH_AUTH_READY) {
 // Role uprawniające do panelu: DASHBOARD_ROLE_IDS, a gdy puste — REQUIRED_ROLE_IDS ze wszystkich serwerów.
 function dashboardRoleIds() {
   const explicit = (process.env.DASHBOARD_ROLE_IDS || '').split(',').map((v) => v.trim()).filter(Boolean);
-  const list = explicit.length ? explicit : Object.values(serverConfigs).flatMap((cfg) => cfg.REQUIRED_ROLE_IDS || []);
+  const configured = explicit.length ? explicit : Object.values(serverConfigs).flatMap((cfg) => cfg.REQUIRED_ROLE_IDS || []);
+  const staffRoles = Object.values(DEFAULT_STAFF_ROLES).flatMap((roles) => Object.values(roles).flat());
+  const list = [...configured, ...staffRoles];
   return [...new Set(list)].filter((id) => /^\d+$/.test(id));
 }
 
