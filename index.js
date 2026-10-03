@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
@@ -447,7 +448,179 @@ function parseStrictDate(value) {
   return date;
 }
 
-app.get('/dashboard', (_req, res) => {
+// --- LOGOWANIE DO PANELU: Discord OAuth2 + sprawdzanie roli na serwerze ---
+const DASH_BASE_URL = (process.env.DASHBOARD_BASE_URL || '').replace(/\/+$/, '');
+const DASH_SECRET = process.env.DASHBOARD_SESSION_SECRET || '';
+const DASH_CLIENT_ID = process.env.DISCORD_APPLICATION_ID;
+const DASH_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+const DASH_SESSION_MS = 6 * 60 * 60 * 1000;   // sesja ważna 6 godzin
+const DASH_RECHECK_MS = 10 * 60 * 1000;       // rola sprawdzana ponownie co 10 minut
+const DASH_AUTH_READY = Boolean(DASH_BASE_URL && DASH_SECRET.length >= 16 && DASH_CLIENT_ID && DASH_CLIENT_SECRET);
+const DASH_SECURE = DASH_BASE_URL.startsWith('https://');
+
+if (!DASH_AUTH_READY) {
+  console.warn('⚠️ Logowanie do panelu nie jest skonfigurowane (DASHBOARD_BASE_URL, DASHBOARD_SESSION_SECRET, DISCORD_CLIENT_SECRET). Panel jest ZABLOKOWANY.');
+}
+
+// Role uprawniające do panelu: DASHBOARD_ROLE_IDS, a gdy puste — REQUIRED_ROLE_IDS ze wszystkich serwerów.
+function dashboardRoleIds() {
+  const explicit = (process.env.DASHBOARD_ROLE_IDS || '').split(',').map((v) => v.trim()).filter(Boolean);
+  const list = explicit.length ? explicit : Object.values(serverConfigs).flatMap((cfg) => cfg.REQUIRED_ROLE_IDS || []);
+  return [...new Set(list)].filter((id) => /^\d+$/.test(id));
+}
+
+function signValue(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', DASH_SECRET).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function readSigned(value) {
+  if (!value || !DASH_SECRET) return null;
+  const [body, sig] = value.split('.');
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac('sha256', DASH_SECRET).update(body).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
+    return payload.exp && payload.exp < Date.now() ? null : payload;
+  } catch {
+    return null;
+  }
+}
+
+function parseCookies(req) {
+  const out = {};
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+function setCookie(res, name, value, maxAgeMs) {
+  res.append('Set-Cookie', `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(maxAgeMs / 1000)}${DASH_SECURE ? '; Secure' : ''}`);
+}
+
+async function userHasDashboardAccess(userId) {
+  if (BOT_OWNER_ID && userId === BOT_OWNER_ID) return true;
+  const allowed = dashboardRoleIds();
+  if (!allowed.length) return false;
+  for (const guildId of Object.keys(serverConfigs)) {
+    try {
+      const r = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+        headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+      });
+      if (!r.ok) continue;
+      const member = await r.json();
+      if ((member.roles || []).some((id) => allowed.includes(id))) return true;
+    } catch (error) {
+      console.error('Błąd sprawdzania roli do panelu:', error.message);
+    }
+  }
+  return false;
+}
+
+async function requireDashboardAuth(req, res, next) {
+  const isApi = req.path.startsWith('/api/');
+  const deny = (code) => (isApi ? res.status(401).json({ ok: false, error: 'unauthorized' }) : res.redirect(`/login${code ? `?error=${code}` : ''}`));
+  if (!DASH_AUTH_READY) return isApi ? res.status(503).json({ ok: false, error: 'auth_not_configured' }) : res.redirect('/login?error=config');
+
+  const session = readSigned(parseCookies(req).dash_session);
+  if (!session) return deny();
+
+  if (Date.now() - session.checked > DASH_RECHECK_MS) {
+    if (!(await userHasDashboardAccess(session.id))) {
+      setCookie(res, 'dash_session', '', 0);
+      return deny('brak_roli');
+    }
+    session.checked = Date.now();
+    setCookie(res, 'dash_session', signValue(session), session.exp - Date.now());
+  }
+  req.dashUser = session;
+  next();
+}
+
+app.get('/login', (req, res) => {
+  if (readSigned(parseCookies(req).dash_session)) return res.redirect('/dashboard');
+  res.sendFile(path.join(ROOT_DIR, 'login.html'));
+});
+
+app.get('/auth/discord', (_req, res) => {
+  if (!DASH_AUTH_READY) return res.redirect('/login?error=config');
+  const state = crypto.randomBytes(16).toString('hex');
+  setCookie(res, 'dash_state', signValue({ state, exp: Date.now() + 10 * 60 * 1000 }), 10 * 60 * 1000);
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.search = new URLSearchParams({
+    client_id: DASH_CLIENT_ID,
+    response_type: 'code',
+    redirect_uri: `${DASH_BASE_URL}/auth/callback`,
+    scope: 'identify',
+    state,
+    prompt: 'none'
+  }).toString();
+  res.redirect(url.toString());
+});
+
+app.get('/auth/callback', async (req, res) => {
+  if (!DASH_AUTH_READY) return res.redirect('/login?error=config');
+  if (req.query.error) return res.redirect('/login?error=anulowano');
+
+  const saved = readSigned(parseCookies(req).dash_state);
+  setCookie(res, 'dash_state', '', 0);
+  if (!saved || !req.query.state || saved.state !== req.query.state || !req.query.code) return res.redirect('/login?error=state');
+
+  try {
+    const tokenRes = await fetch('https://discord.com/api/v10/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: DASH_CLIENT_ID,
+        client_secret: DASH_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code: String(req.query.code),
+        redirect_uri: `${DASH_BASE_URL}/auth/callback`
+      })
+    });
+    if (!tokenRes.ok) throw new Error(`token HTTP ${tokenRes.status}`);
+    const token = await tokenRes.json();
+
+    const userRes = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${token.access_token}` } });
+    if (!userRes.ok) throw new Error(`users/@me HTTP ${userRes.status}`);
+    const user = await userRes.json();
+    const displayName = user.global_name || user.username;
+
+    if (!(await userHasDashboardAccess(user.id))) {
+      addDashboardLog('warn', `Odmowa dostępu do panelu: ${displayName} (${user.id}) — brak wymaganej roli.`, { source: 'bot' });
+      return res.redirect('/login?error=brak_roli');
+    }
+
+    const now = Date.now();
+    setCookie(res, 'dash_session', signValue({ id: user.id, name: displayName, avatar: user.avatar || null, checked: now, exp: now + DASH_SESSION_MS }), DASH_SESSION_MS);
+    addDashboardLog('info', `Zalogowano do panelu: ${displayName} (${user.id}).`, { source: 'bot' });
+    res.redirect('/dashboard');
+  } catch (error) {
+    console.error('Błąd logowania do panelu:', error.message);
+    res.redirect('/login?error=blad');
+  }
+});
+
+app.post('/auth/logout', (_req, res) => {
+  setCookie(res, 'dash_session', '', 0);
+  res.json({ ok: true });
+});
+
+app.get('/api/me', requireDashboardAuth, (req, res) => {
+  const { id, name, avatar } = req.dashUser;
+  const avatarUrl = avatar
+    ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64`
+    : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(id) >> 22n) % 6n)}.png`;
+  res.json({ ok: true, id, name, avatarUrl });
+});
+
+app.get('/dashboard', requireDashboardAuth, (_req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'dashboard.html'));
 });
 
@@ -458,7 +631,7 @@ app.get('/dashboard.css', (_req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    name: 'frakcyjny-bot',
+    name: 'Law Enforcement',
     uptimeSeconds: Math.round(process.uptime()),
     startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
     guilds: Object.keys(serverConfigs).length,
@@ -467,7 +640,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.get('/api/dashboard-summary', async (_req, res) => {
+app.get('/api/dashboard-summary', requireDashboardAuth, async (_req, res) => {
   try {
     const serverEntries = Object.entries(serverConfigs);
     const ticketCount = serverEntries.filter(([, cfg]) => cfg.TICKETS).length;
@@ -494,11 +667,11 @@ app.get('/api/dashboard-summary', async (_req, res) => {
   }
 });
 
-app.get('/api/logs', (_req, res) => {
+app.get('/api/logs', requireDashboardAuth, (_req, res) => {
   res.json({ ok: true, logs: dashboardLogs.slice(0, 80) });
 });
 
-app.get('/api/servers', async (_req, res) => {
+app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   try {
     const guilds = [];
     for (const [guildId, cfg] of Object.entries(serverConfigs)) {
