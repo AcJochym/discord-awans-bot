@@ -37,6 +37,19 @@
         </div>
       </header>
 
+      <div class="layout">
+      <aside class="glass-card staff-panel" aria-label="Administracja">
+        <div class="staff-head">
+          <div>
+            <h2>Administracja</h2>
+            <span id="staffTotal" class="muted">Ładowanie…</span>
+          </div>
+        </div>
+        <select id="staffGuild" class="staff-guild" aria-label="Serwer" hidden></select>
+        <div id="staffGroups" class="staff-scroll"><div class="empty">Ładowanie listy…</div></div>
+      </aside>
+
+      <div class="main-col">
       <nav class="tabs" aria-label="Zakładki dashboardu">
         <span class="tab-glider" aria-hidden="true"></span>
         <button class="tab active" data-tab="overview">Status</button>
@@ -212,6 +225,24 @@
           <button type="button" id="loadMore" class="ghost-btn load-more" hidden>Załaduj więcej</button>
         </div>
       </section>
+      </div>
+      </div>
+    </div>
+
+    <div id="profileModal" class="modal" hidden>
+      <div class="modal-card glass-card" role="dialog" aria-modal="true" aria-labelledby="pfName">
+        <button type="button" id="pfClose" class="modal-close" aria-label="Zamknij">&times;</button>
+        <div id="pfBanner" class="pf-banner"></div>
+        <div class="pf-body">
+          <img id="pfAvatar" class="pf-avatar" alt="" />
+          <h3 id="pfName"></h3>
+          <p id="pfUser" class="muted"></p>
+          <div id="pfBadges" class="pf-badges"></div>
+          <dl id="pfInfo" class="pf-info"></dl>
+          <h4 class="pf-sub">Role na serwerze</h4>
+          <div id="pfRoles" class="pf-roles"></div>
+        </div>
+      </div>
     </div>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>
@@ -465,6 +496,8 @@
           chip.classList.add('bump');
         }
         onlineCount = data.count;
+        onlineIds = new Set(data.online.map((admin) => admin.id));
+        applyOnlineDots();
       }
 
       async function pollPresence() {
@@ -480,6 +513,149 @@
           lastSeq = data.lastSeq;
         } catch (_) { /* przekierowanie obsłuży apiFetch */ }
       }
+
+      /* --- Administracja (lewy panel) i profil --- */
+      const staffEl = document.getElementById('staffGroups');
+      const staffGuildSel = document.getElementById('staffGuild');
+      const groupOpen = {};
+      const narrow = matchMedia('(max-width: 1000px)').matches;
+      let staffData = null;
+      let staffSig = '';
+      let staffGuild = '';
+      let staffFirst = true;
+      let guildsSig = '';
+      let onlineIds = new Set();
+      let profileMember = null;
+
+      function applyOnlineDots() {
+        staffEl.querySelectorAll('.staff-row').forEach((row) => row.classList.toggle('online', onlineIds.has(row.dataset.id)));
+        if (profileMember) document.getElementById('pfPanel')?.toggleAttribute('hidden', !onlineIds.has(profileMember.id));
+      }
+
+      function renderStaff(data) {
+        staffEl.replaceChildren();
+        data.groups.forEach((group, gi) => {
+          const details = document.createElement('details');
+          details.className = 'staff-group';
+          details.dataset.group = group.key;
+          details.open = group.key in groupOpen ? groupOpen[group.key] : !narrow;
+          details.addEventListener('toggle', () => { groupOpen[group.key] = details.open; });
+          if (staffFirst) { details.classList.add('enter'); details.style.setProperty('--i', gi); }
+
+          const summary = document.createElement('summary');
+          summary.innerHTML = `<span class="gdot"></span><span class="gname">${esc(group.label)}</span><span class="gcount">${group.members.length}</span>`;
+          details.appendChild(summary);
+
+          const list = document.createElement('div');
+          list.className = 'staff-list';
+          if (!group.members.length) list.innerHTML = '<div class="staff-empty">Brak osób</div>';
+          group.members.forEach((m) => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'staff-row';
+            row.dataset.id = m.id;
+            row.dataset.group = group.key;
+            row.innerHTML = `<span class="av"><img src="${esc(m.avatarUrl)}" alt="" loading="lazy" /><i class="pdot"></i></span><span class="sr-name">${esc(m.name)}</span>`;
+            list.appendChild(row);
+          });
+          details.appendChild(list);
+          staffEl.appendChild(details);
+        });
+        document.getElementById('staffTotal').textContent = `${data.total} ${data.total === 1 ? 'osoba' : 'osób'} • ${data.guildName}`;
+        staffFirst = false;
+        applyOnlineDots();
+      }
+
+      function renderStaffError(data) {
+        staffEl.innerHTML = `<div class="empty">${esc(data.error || 'Nie udało się pobrać listy administracji.')}</div>`;
+        document.getElementById('staffTotal').textContent = 'Błąd ładowania';
+      }
+
+      function populateStaffGuilds(guilds, current) {
+        const sig = JSON.stringify(guilds);
+        staffGuildSel.hidden = guilds.length < 2;
+        if (sig !== guildsSig) {
+          guildsSig = sig;
+          staffGuildSel.replaceChildren(...guilds.map((g) => new Option(g.name, g.id)));
+        }
+        staffGuildSel.value = current || staffGuild;
+      }
+
+      async function loadStaff() {
+        try {
+          const data = await (await apiFetch(`/api/staff${staffGuild ? `?guild=${encodeURIComponent(staffGuild)}` : ''}`)).json();
+          if (Array.isArray(data.guilds) && data.guilds.length) populateStaffGuilds(data.guilds, data.guildId);
+          if (!data.ok) { staffSig = ''; renderStaffError(data); return; }
+          staffGuild = data.guildId;
+          const sig = JSON.stringify(data.groups);
+          if (sig === staffSig) return;   // bez zmian = bez przerysowania
+          staffSig = sig;
+          staffData = data;
+          renderStaff(data);
+        } catch (_) { /* przekierowanie obsłuży apiFetch */ }
+      }
+
+      staffGuildSel.addEventListener('change', () => { staffGuild = staffGuildSel.value; staffSig = ''; staffFirst = true; loadStaff(); });
+
+      /* Popup profilu */
+      const modal = document.getElementById('profileModal');
+      const fmtDate = (v) => (v ? new Date(v).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' }) : '—');
+      const daysSince = (v) => (v ? Math.max(0, Math.floor((Date.now() - new Date(v)) / 864e5)) : null);
+      const GROUP_COLORS = { high_command: '#ff8f8f', command: '#fcd34d', medium_command: '#7cc4ff', command_ftd: '#c4a8ff', ftd: '#6ee7b7' };
+      let lastFocus = null;
+      let closeTimer = null;
+
+      function openProfile(member, group) {
+        clearTimeout(closeTimer);
+        profileMember = member;
+        lastFocus = document.activeElement;
+        const accent = GROUP_COLORS[group.key] || '#7cc4ff';
+        document.getElementById('pfBanner').style.background = `linear-gradient(135deg, ${esc(member.color || accent)}, rgba(10, 20, 45, 0.9))`;
+        document.getElementById('pfAvatar').src = member.avatarUrl;
+        document.getElementById('pfName').textContent = member.name;
+        document.getElementById('pfUser').textContent = `@${member.username}`;
+        document.getElementById('pfBadges').innerHTML =
+          `<span class="pf-badge" style="--c:${accent}">${esc(group.label)}</span>` +
+          `<span id="pfPanel" class="pf-badge live" ${onlineIds.has(member.id) ? '' : 'hidden'}>Teraz w panelu</span>`;
+        const days = daysSince(member.joinedAt);
+        document.getElementById('pfInfo').innerHTML = [
+          ['Pseudonim', member.nick ? esc(member.nick) : '—'],
+          ['Na serwerze od', `${fmtDate(member.joinedAt)}${days !== null ? ` <span class="muted">(${fmtNum(days)} dni)</span>` : ''}`],
+          ['Konto Discord od', fmtDate(member.createdAt)],
+          ['ID użytkownika', `<span class="mono">${esc(member.id)}</span> <button type="button" class="copy-btn" id="pfCopy">Kopiuj</button>`]
+        ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+        document.getElementById('pfRoles').innerHTML = member.roles.length
+          ? member.roles.map((r) => `<span class="role-chip${r.staff ? ' staff' : ''}"><i style="background:${esc(r.color || '#8b9db3')}"></i>${esc(r.name)}</span>`).join('')
+          : '<span class="muted">Brak ról.</span>';
+        document.getElementById('pfCopy').addEventListener('click', async (e) => {
+          try { await navigator.clipboard.writeText(member.id); e.target.textContent = 'Skopiowano!'; } catch (_) { e.target.textContent = 'Brak dostępu'; }
+          setTimeout(() => { e.target.textContent = 'Kopiuj'; }, 1500);
+        });
+        modal.hidden = false;
+        document.body.classList.add('modal-open');
+        requestAnimationFrame(() => modal.classList.add('open'));
+        document.getElementById('pfClose').focus();
+      }
+
+      function closeProfile() {
+        if (modal.hidden) return;
+        modal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+        profileMember = null;
+        closeTimer = setTimeout(() => { modal.hidden = true; }, 260);
+        if (lastFocus && lastFocus.focus) lastFocus.focus();
+      }
+
+      staffEl.addEventListener('click', (e) => {
+        const row = e.target.closest('.staff-row');
+        if (!row || !staffData) return;
+        const group = staffData.groups.find((g) => g.key === row.dataset.group);
+        const member = group?.members.find((m) => m.id === row.dataset.id);
+        if (member) openProfile(member, group);
+      });
+      document.getElementById('pfClose').addEventListener('click', closeProfile);
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeProfile(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
 
       async function loadSummary() {
         const response = await apiFetch('/api/dashboard-summary');
@@ -798,6 +974,8 @@
 
       setActiveTab('overview');
       loadMe();
+      loadStaff();
+      setInterval(loadStaff, 60000);
       reloadActivity();
       pollPresence();
       setInterval(pollPresence, 5000);
