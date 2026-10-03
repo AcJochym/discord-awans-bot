@@ -55,7 +55,7 @@
         <button class="tab active" data-tab="overview">Status</button>
         <button class="tab" data-tab="servers">Serwery</button>
         <button class="tab" data-tab="logs">Logi</button>
-        <button class="tab" data-tab="config">Konfiguracja</button>
+        <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
       <main id="overviewTab" class="tab-panel active">
@@ -395,6 +395,7 @@
         try {
           const data = await (await apiFetch('/api/me')).json();
           if (!data.ok) return;
+          document.getElementById('configTabButton').hidden = !data.isBotOwner;
           document.getElementById('userAvatar').src = data.avatarUrl;
           document.getElementById('userName').textContent = data.name;
           document.getElementById('userChip').hidden = false;
