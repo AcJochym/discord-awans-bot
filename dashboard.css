@@ -392,6 +392,40 @@ h3 { margin: 0; font-size: 1.5rem; font-weight: 700; }
 .load-more { display: block; margin: 14px auto 0; }
 .load-more:disabled { opacity: 0.5; cursor: wait; }
 
+/* Konfiguracja serwerów */
+.config-editor { padding: 22px 24px; }
+.config-editor .panel-header { align-items: flex-end; flex-wrap: wrap; }
+.config-editor .panel-header > div { margin-right: auto; }
+.config-editor .panel-header p { margin: 4px 0 0; }
+.config-server-label { color: var(--muted); font-size: 0.8rem; }
+.config-editor .staff-guild { width: min(100%, 420px); margin: 0; }
+.config-note { margin: 0 0 16px; color: var(--muted); font-size: 0.88rem; }
+.config-json {
+  display: block; width: 100%; min-height: 58vh; margin-top: 6px; padding: 16px;
+  resize: vertical; border: 1px solid var(--edge); border-radius: 12px;
+  background: rgba(3, 9, 22, 0.72); color: var(--text); color-scheme: dark;
+  font: 13px/1.65 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  tab-size: 2; overflow-wrap: anywhere;
+}
+.config-json:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.config-json:disabled { opacity: 0.65; }
+.config-actions { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-top: 14px; }
+.config-actions > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.config-message { color: var(--muted); font-size: 0.85rem; }
+.config-message.success { color: var(--green); }
+.config-message.error { color: var(--red); }
+.config-save { background: rgba(110, 231, 183, 0.15); }
+.config-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (max-width: 560px) {
+  .config-editor { padding: 18px 16px; }
+  .config-editor .panel-header { align-items: stretch; }
+  .config-editor .panel-header > div { flex-basis: 100%; }
+  .config-editor .staff-guild { width: 100%; }
+  .config-actions { align-items: stretch; flex-direction: column; }
+  .config-actions > div { justify-content: stretch; }
+  .config-actions button { flex: 1; }
+}
+
 /* KPI */
 .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
 .kpi { padding: 14px 18px; animation: rise 0.5s calc(var(--i, 0) * 60ms) cubic-bezier(.2, .8, .2, 1) both; }
