@@ -9,6 +9,8 @@ let pool = null;
 let ready = false;
 let initDone = false;
 let nextMemId = 1;
+let persistenceGeneration = 0;
+let persistenceQueue = Promise.resolve();
 
 export const storageMode = () => (ready ? 'postgres' : 'memory');
 
@@ -88,8 +90,24 @@ async function purgeOld() {
 }
 
 function persist(row) {
-  pool.query(INSERT_SQL, [row.timestamp, row.level, row.source, row.guildId, row.command, row.message, row.meta])
-    .catch((e) => console.error('Błąd zapisu logu do bazy:', e.message));
+  const generation = persistenceGeneration;
+  const write = persistenceQueue.then(() => {
+    if (!ready || generation !== persistenceGeneration) return;
+    return pool.query(INSERT_SQL, [row.timestamp, row.level, row.source, row.guildId, row.command, row.message, row.meta]);
+  });
+  persistenceQueue = write.catch((e) => console.error('Błąd zapisu logu do bazy:', e.message));
+}
+
+export async function clearLogs() {
+  persistenceGeneration++;
+  memory.length = 0;
+  pending.length = 0;
+  nextMemId = 1;
+  if (!ready) return;
+
+  const deletion = persistenceQueue.then(() => pool.query('DELETE FROM dashboard_logs'));
+  persistenceQueue = deletion.catch((e) => console.error('Błąd czyszczenia logów w bazie:', e.message));
+  await deletion;
 }
 
 export function addLog(level = 'info', message = '', meta = {}) {
@@ -151,17 +169,23 @@ function memMatch(f) {
   };
 }
 
-const fromRow = (r) => ({ id: String(r.id), level: r.level, source: r.source, guildId: r.guild_id, command: r.command, message: r.message, timestamp: new Date(r.ts).toISOString() });
-const strip = ({ meta, ...r }) => r;
+function parseMeta(value) {
+  if (!value) return null;
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+const fromRow = (r) => ({ id: String(r.id), level: r.level, source: r.source, guildId: r.guild_id, command: r.command, message: r.message, timestamp: new Date(r.ts).toISOString(), meta: parseMeta(r.meta) });
+const fromMemory = ({ meta, ...row }) => ({ ...row, meta: parseMeta(meta) });
 
 export async function queryLogs(f, { limit = 50, offset = 0 } = {}) {
   if (!ready) {
     const all = memory.filter(memMatch(f));
-    return { logs: all.slice(offset, offset + limit).map(strip), total: all.length };
+    return { logs: all.slice(offset, offset + limit).map(fromMemory), total: all.length };
   }
   const { where, params } = sqlWhere(f);
   const [rows, count] = await Promise.all([
-    pool.query(`SELECT id, ts, level, source, guild_id, command, message FROM dashboard_logs ${where} ORDER BY ts DESC, id DESC LIMIT ${limit} OFFSET ${offset}`, params),
+    pool.query(`SELECT id, ts, level, source, guild_id, command, message, meta FROM dashboard_logs ${where} ORDER BY ts DESC, id DESC LIMIT ${limit} OFFSET ${offset}`, params),
     pool.query(`SELECT COUNT(*)::int AS n FROM dashboard_logs ${where}`, params)
   ]);
   return { logs: rows.rows.map(fromRow), total: count.rows[0].n };
