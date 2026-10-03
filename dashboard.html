@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DC Bot Panel</title>
-    <link rel="stylesheet" href="/dashboard-static/styles.css" />
+    <link rel="stylesheet" href="/dashboard.css" />
   </head>
   <body>
     <div class="container">
@@ -107,10 +107,7 @@
 
       loadHealth();
       loadServers();
-      setInterval(() => {
-        loadHealth();
-        loadServers();
-      }, 30000);
+      setInterval(() => { loadHealth(); loadServers(); }, 30000);
     </script>
   </body>
 </html>
