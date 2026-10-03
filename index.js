@@ -36,17 +36,18 @@ function addDashboardLog(level = 'info', message, meta = {}) {
   dashboardLogs.unshift({
     id: Date.now() + Math.random(),
     level,
+    source: meta.source || 'bot',
     message,
     timestamp: new Date().toISOString(),
     ...meta
   });
 
-  if (dashboardLogs.length > 100) {
-    dashboardLogs.length = 100;
+  if (dashboardLogs.length > 200) {
+    dashboardLogs.length = 200;
   }
 }
 
-addDashboardLog('info', 'Dashboard został uruchomiony.');
+addDashboardLog('info', 'Dashboard został uruchomiony.', { source: 'bot' });
 
 const URLOP_HELP_EMBED = {
   title: "🌴 Instrukcja Systemu Urlopowego — Komenda /urlop",
@@ -471,6 +472,8 @@ app.get('/api/dashboard-summary', async (_req, res) => {
     const serverEntries = Object.entries(serverConfigs);
     const ticketCount = serverEntries.filter(([, cfg]) => cfg.TICKETS).length;
     const webhookCount = serverEntries.filter(([, cfg]) => Boolean(cfg.WEBHOOK_URL)).length;
+    const botLogs = dashboardLogs.filter((log) => log.source === 'bot').length;
+    const serverLogs = dashboardLogs.filter((log) => log.source === 'server').length;
 
     const summary = {
       ok: true,
@@ -478,6 +481,8 @@ app.get('/api/dashboard-summary', async (_req, res) => {
       totalServers: serverEntries.length,
       ticketServers: ticketCount,
       webhookServers: webhookCount,
+      botLogs,
+      serverLogs,
       lastUpdated: new Date().toISOString(),
       logsCount: dashboardLogs.length
     };
@@ -490,7 +495,7 @@ app.get('/api/dashboard-summary', async (_req, res) => {
 });
 
 app.get('/api/logs', (_req, res) => {
-  res.json({ ok: true, logs: dashboardLogs.slice(0, 30) });
+  res.json({ ok: true, logs: dashboardLogs.slice(0, 80) });
 });
 
 app.get('/api/servers', async (_req, res) => {
@@ -498,13 +503,21 @@ app.get('/api/servers', async (_req, res) => {
     const guilds = [];
     for (const [guildId, cfg] of Object.entries(serverConfigs)) {
       const guildInfo = await getGuildInfo(guildId);
+      const guildLogs = dashboardLogs.filter((log) => log.guildId === guildId);
+      const commandCount = guildLogs.filter((log) => log.command).length;
       guilds.push({
         id: guildId,
         name: guildInfo?.name || 'Nieznany serwer',
         memberCount: guildInfo?.approximate_member_count ?? null,
         channels: cfg.CHANNELS ? Object.keys(cfg.CHANNELS).length : 0,
         ticketsEnabled: Boolean(cfg.TICKETS),
-        webhookConfigured: Boolean(cfg.WEBHOOK_URL)
+        webhookConfigured: Boolean(cfg.WEBHOOK_URL),
+        stats: {
+          totalEvents: guildLogs.length,
+          commandCount,
+          lastEvent: guildLogs[0]?.timestamp || null,
+          status: guildLogs.some((log) => log.level === 'error') ? 'warning' : 'online'
+        }
       });
     }
     res.json({ ok: true, guilds });
@@ -1027,6 +1040,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
     addDashboardLog('info', `Użyto komendy /${name} na serwerze ${interaction.guild_id}.`, {
       guildId: interaction.guild_id,
+      source: 'server',
       command: name
     });
 
@@ -1041,11 +1055,11 @@ const SERVER_PORT = process.env.PORT || 8080;
 
 app.listen(SERVER_PORT, '0.0.0.0', () => {
   console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
-  addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`);
+  addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`, { source: 'bot' });
   announceUpdateToAllServers();
   discordClient.login(process.env.DISCORD_BOT_TOKEN)
     .catch(error => {
-      addDashboardLog('error', 'Nie udało się połączyć z Discord Gateway.', { error: error.message });
+      addDashboardLog('error', 'Nie udało się połączyć z Discord Gateway.', { source: 'bot', error: error.message });
       console.error('Nie udało się połączyć z Discord Gateway:', error);
     });
 });
