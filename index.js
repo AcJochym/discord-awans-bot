@@ -2,10 +2,12 @@ import express from 'express';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
+import path from 'node:path';
 import { handleTicketInteraction } from './tickets.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const ROOT_DIR = process.cwd();
 
 
 
@@ -427,7 +429,46 @@ function parseStrictDate(value) {
   return date;
 }
 
-app.get('/', (_req, res) => res.status(200).send('Law Enforcement bot is online. Discord endpoint: /interactions'));
+app.use('/dashboard-static', express.static(path.join(ROOT_DIR, 'public')));
+
+app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(ROOT_DIR, 'public', 'dashboard.html'));
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    name: 'frakcyjny-bot',
+    uptimeSeconds: Math.round(process.uptime()),
+    startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    guilds: Object.keys(serverConfigs).length,
+    port: PORT,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/api/servers', async (_req, res) => {
+  try {
+    const guilds = [];
+    for (const [guildId, cfg] of Object.entries(serverConfigs)) {
+      const guildInfo = await getGuildInfo(guildId);
+      guilds.push({
+        id: guildId,
+        name: guildInfo?.name || 'Nieznany serwer',
+        memberCount: guildInfo?.approximate_member_count ?? null,
+        channels: cfg.CHANNELS ? Object.keys(cfg.CHANNELS).length : 0,
+        ticketsEnabled: Boolean(cfg.TICKETS),
+        webhookConfigured: Boolean(cfg.WEBHOOK_URL)
+      });
+    }
+    res.json({ ok: true, guilds });
+  } catch (error) {
+    console.error('Błąd pobierania listy serwerów:', error);
+    res.status(500).json({ ok: false, error: 'Nie udało się pobrać listy serwerów.' });
+  }
+});
+
+app.get('/', (_req, res) => res.status(200).send('Law Enforcement bot is online. Discord endpoint: /interactions. Dashboard: /dashboard'));
 
 app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), async (req, res) => {
   const interaction = req.body;
