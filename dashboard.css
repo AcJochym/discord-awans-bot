@@ -46,6 +46,40 @@ body {
   -webkit-backdrop-filter: blur(22px);
 }
 
+.glass-card,
+.guild-item,
+.tab {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.glass-card::before,
+.guild-item::before,
+.tab::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,0.38), rgba(255,255,255,0.12) 18%, rgba(255,255,255,0.04) 32%, transparent 58%);
+  opacity: 0;
+  transition: opacity 0.22s ease, transform 0.2s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.glass-card:hover::before,
+.guild-item:hover::before,
+.tab:hover::before {
+  opacity: 1;
+}
+
+.glass-card > *,
+.guild-item > *,
+.tab > * {
+  position: relative;
+  z-index: 1;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
