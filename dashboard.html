@@ -512,10 +512,16 @@
         serverActivityText.textContent = `${data.serverLogs || 0} zdarzeń`;
       }
 
+      let serversSig = '';
       async function loadServers() {
         const response = await apiFetch('/api/servers');
         const data = await response.json();
 
+        if (data.ok && Array.isArray(data.guilds)) {
+          const sig = JSON.stringify(data.guilds);
+          if (sig === serversSig) return;
+          serversSig = sig;
+        }
         guildsContainer.innerHTML = '';
 
         if (!data.ok || !Array.isArray(data.guilds) || data.guilds.length === 0) {
@@ -568,6 +574,8 @@
           void serverDetails.offsetWidth;
           serverDetails.classList.add('swap');
           lastDetailId = guild.id;
+        } else {
+          serverDetails.classList.remove('swap');
         }
         serverDetails.innerHTML = `
           <div class="details-header">
@@ -639,7 +647,11 @@
         document.getElementById('exportBtn').href = `/api/logs/export.csv?${filterParams()}`;
       }
 
+      let guildSelectSig = '';
       function populateGuildSelect() {
+        const sig = [...guildNameMap].join('|');
+        if (sig === guildSelectSig) return;
+        guildSelectSig = sig;
         const select = document.getElementById('guildSelect');
         select.replaceChildren(new Option('Wszystkie serwery', ''));
         guildNameMap.forEach((name, id) => select.appendChild(new Option(name, id)));
@@ -658,7 +670,7 @@
         const d = new Date(ms);
         if (step >= 86400) return d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
         const time = d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-        return spanDays > 1 ? `${d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} ${time}` : time;
+        return spanDays >= 0.9 ? `${d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} ${time}` : time;
       }
 
       function renderTimeline(data) {
@@ -674,7 +686,8 @@
         }).join('');
         const first = bucketLabel(data.timeline[0].t, data.step, spanDays);
         const last = bucketLabel(data.timeline.at(-1).t, data.step, spanDays);
-        el.innerHTML = `<div class="plot"><span class="ymax">${max}</span><div class="cols">${cols}</div></div><div class="xaxis"><span>${esc(first)}</span><span>${esc(last)}</span></div>`;
+        const mid = bucketLabel(data.timeline[Math.floor(data.timeline.length / 2)].t, data.step, spanDays);
+        el.innerHTML = `<div class="plot"><span class="ymax">${max}</span><div class="cols">${cols}</div></div><div class="xaxis"><span>${esc(first)}</span><span>${esc(mid)}</span><span>${esc(last)}</span></div>`;
       }
 
       function renderHBars(elId, items, labelOf, onClick) {
@@ -691,16 +704,19 @@
         }));
       }
 
-      async function loadPage(reset, animate = true) {
-        if (reset) { logOffset = 0; logListEl.replaceChildren(); }
+      async function fetchPage(offset) {
         const p = filterParams();
         p.set('limit', PAGE);
-        p.set('offset', logOffset);
+        p.set('offset', offset);
         const data = await (await apiFetch(`/api/logs?${p}`)).json();
-        if (!data.ok) return null;
+        return data.ok ? data : null;
+      }
+
+      function renderPage(data, reset, animate) {
+        if (reset) { logOffset = 0; logListEl.replaceChildren(); }
         data.logs.forEach((entry, i) => {
           const item = renderLogItem(entry, i);
-          if (animate) item.classList.add('enter');
+          item.classList.toggle('enter', animate);
           logListEl.appendChild(item);
         });
         logOffset += data.logs.length;
@@ -710,18 +726,29 @@
         const pill = document.getElementById('storagePill');
         pill.textContent = data.storage === 'postgres' ? 'Baza: PostgreSQL' : 'Pamięć (tymczasowa)';
         pill.className = `tiny-pill ${data.storage === 'postgres' ? 'online' : 'error'}`;
-        return data;
       }
 
+      async function loadMorePage() {
+        const data = await fetchPage(logOffset);
+        if (data) renderPage(data, false, true);
+      }
+
+      let activitySig = '';
       async function reloadActivity(silent = false) {
         const id = ++activityId;
-        syncFilterUi();
+        if (!silent) syncFilterUi();
         const tz = -new Date().getTimezoneOffset() * 60;
-        const [stats] = await Promise.all([
+        const [stats, page] = await Promise.all([
           apiFetch(`/api/logs/stats?${filterParams()}&tz=${tz}`).then((r) => r.json()),
-          loadPage(true, !silent)
+          fetchPage(0)
         ]);
-        if (id !== activityId || !stats.ok) return;
+        if (id !== activityId || !stats.ok || !page) return;
+        // Odświeżanie w tle: jeśli nic się nie zmieniło, nie dotykamy strony (zero migania)
+        const sig = JSON.stringify([stats.totals, stats.timeline, stats.commands, stats.guilds, page.total, page.logs.map((l) => l.id), page.storage]);
+        if (silent && sig === activitySig) return;
+        activitySig = sig;
+        document.getElementById('logsTab').classList.toggle('static', silent);
+        renderPage(page, true, !silent);
         renderKpis(stats.totals);
         renderTimeline(stats);
         renderHBars('commandsChart', stats.commands, (x) => `/${x.command}`);
@@ -756,7 +783,7 @@
         document.getElementById('searchInput').value = '';
         reloadActivity();
       });
-      loadMoreBtn.addEventListener('click', async () => { loadMoreBtn.disabled = true; try { await loadPage(false); } finally { loadMoreBtn.disabled = false; } });
+      loadMoreBtn.addEventListener('click', async () => { loadMoreBtn.disabled = true; try { await loadMorePage(); } finally { loadMoreBtn.disabled = false; } });
 
       // Odświeżanie w tle co 15 s, tylko gdy zakładka jest otwarta i nie doładowano starszych wpisów
       function refreshActivityIfIdle() {
