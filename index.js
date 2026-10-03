@@ -103,14 +103,14 @@ discordClient.on('messageCreate', async message => {
     } catch (error) {
       console.error('Nie udało się przekazać wiadomości na DM:', error);
       await message.reply({
-        content: `Nie udało się wysłać DM do **${recipient.username}**. Ta osoba może mieć zablokowane wiadomości prywatne od członków serwera.`,
+        content: `Nie udało mi się przekazać wiadmomości do **${recipient.username}**. Ta osoba może mieć zablokowane wiadomości prywatne od członków serwera.`,
         allowedMentions: { repliedUser: false }
       }).catch(replyError => console.error('Nie udało się potwierdzić błędu przekazania:', replyError));
       return;
     }
 
     await message.reply({
-      content: `✅ Przekazałem Twoją wiadomość do **${recipient.username}** na DM.`,
+      content: `✅ Przekazałem Twoją wiadomość do **${recipient.username}**.`,
       allowedMentions: { repliedUser: false }
     }).catch(error => console.error('Nie udało się potwierdzić przekazania:', error));
     return;
@@ -122,7 +122,7 @@ discordClient.on('messageCreate', async message => {
   if (words.has('urlop')) {
     response = { embeds: [URLOP_HELP_EMBED] };
   } else if ((words.has('high') && words.has('command')) || words.has('highcommand') || words.has('chief')) {
-    response = '**High Command LSPD:**\n• [02] Mathew Ray — Assistant Chief Of Police\n• [01] Peter O\'Connor — Chief of Police';
+    response = '**High Command LSPD:**\n• [01] Peter O\'Connor — Chief of Police\n• [02] Mathew Ray — Assistant Chief Of Police';
   } else if (words.has('ftd') || (words.has('field') && words.has('training')) || (words.has('szkolenie') && (words.has('kto') || words.has('ftd')))) {
     response = '**Field Training Division (FTD):**\n• [109] Aiden Walker — Commander, Field Training Division\n• [122] Katrina Sheeran — Under Commander, Field Training Division';
   } else if (words.has('command')) {
