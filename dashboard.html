@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/dashboard.css" />
   </head>
   <body>
-    <div class="container">
+    <div class="dashboard-shell">
       <header class="topbar">
         <div>
           <p class="eyebrow">Discord Bot</p>
@@ -23,51 +23,113 @@
       </nav>
 
       <main id="overviewTab" class="tab-panel active">
-        <div class="grid">
-          <section class="card">
-            <span class="label">Status</span>
-            <strong id="statusText">Sprawdzam...</strong>
+        <div class="status-grid">
+          <section class="glass-card card-wide">
+            <div class="card-header-row">
+              <span class="label">Stan bota</span>
+              <span id="statusTextChip" class="tiny-pill online">Działa</span>
+            </div>
+            <div class="headline-row">
+              <div>
+                <div class="metric-label">Status</div>
+                <div id="statusText" class="metric-headline">Sprawdzam...</div>
+              </div>
+              <div class="mini-block">
+                <div class="metric-label">Czas działania</div>
+                <div id="uptimeText" class="metric-value">--</div>
+              </div>
+            </div>
           </section>
-          <section class="card">
-            <span class="label">Czas działania</span>
-            <strong id="uptimeText">--</strong>
-          </section>
-          <section class="card">
+
+          <section class="glass-card stat-card">
             <span class="label">Serwery</span>
             <strong id="guildsText">--</strong>
           </section>
-          <section class="card">
+
+          <section class="glass-card stat-card">
             <span class="label">Tickety</span>
             <strong id="ticketServersText">--</strong>
           </section>
-          <section class="card">
+
+          <section class="glass-card stat-card">
             <span class="label">Webhooki</span>
             <strong id="webhookServersText">--</strong>
           </section>
-          <section class="card">
-            <span class="label">Logi</span>
-            <strong id="logsCountText">--</strong>
+
+          <section class="glass-card stat-card">
+            <span class="label">Logi bota</span>
+            <strong id="botLogsText">--</strong>
+          </section>
+
+          <section class="glass-card stat-card">
+            <span class="label">Logi serwerów</span>
+            <strong id="serverLogsText">--</strong>
+          </section>
+        </div>
+
+        <div class="overview-panels">
+          <section class="glass-card panel-block">
+            <div class="panel-header">
+              <h2>Podgląd</h2>
+              <span id="updatedAt" class="muted">--</span>
+            </div>
+            <ul class="bullet-list">
+              <li>Połączenie z Discordem aktywne</li>
+              <li>Bot monitoruje konfigurację serwerów</li>
+              <li>Logi są odświeżane automatycznie</li>
+            </ul>
+          </section>
+
+          <section class="glass-card panel-block">
+            <div class="panel-header">
+              <h2>Aktywność</h2>
+              <span id="logsUpdatedAt" class="muted">--</span>
+            </div>
+            <div class="activity-grid">
+              <div>
+                <span class="mini-label">System</span>
+                <strong id="systemActivityText">--</strong>
+              </div>
+              <div>
+                <span class="mini-label">Serwery</span>
+                <strong id="serverActivityText">--</strong>
+              </div>
+            </div>
           </section>
         </div>
       </main>
 
       <section id="serversTab" class="tab-panel">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Lista serwerów</h2>
-            <span id="updatedAt" class="muted">--</span>
+        <div class="servers-layout">
+          <div class="glass-card server-list-panel">
+            <div class="panel-header">
+              <h2>Serwery</h2>
+              <span id="serversUpdatedAt" class="muted">--</span>
+            </div>
+            <div id="guilds" class="guild-list"></div>
           </div>
-          <div id="guilds" class="guild-list"></div>
+
+          <aside id="serverDetails" class="glass-card server-details">
+            <div class="empty-state">Wybierz serwer, aby zobaczyć statystyki.</div>
+          </aside>
         </div>
       </section>
 
       <section id="logsTab" class="tab-panel">
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Ostatnie zdarzenia</h2>
-            <span id="logsUpdatedAt" class="muted">--</span>
+        <div class="log-layout">
+          <div class="glass-card log-group">
+            <div class="panel-header">
+              <h2>Logi bota</h2>
+            </div>
+            <div id="botLogs" class="log-list"></div>
           </div>
-          <div id="logs" class="log-list"></div>
+
+          <div class="glass-card log-group">
+            <div class="panel-header">
+              <h2>Logi serwerów</h2>
+            </div>
+            <div id="serverLogs" class="log-list"></div>
+          </div>
         </div>
       </section>
     </div>
@@ -75,17 +137,26 @@
     <script>
       const statusBadge = document.getElementById('statusBadge');
       const statusText = document.getElementById('statusText');
+      const statusTextChip = document.getElementById('statusTextChip');
       const uptimeText = document.getElementById('uptimeText');
       const guildsText = document.getElementById('guildsText');
       const ticketServersText = document.getElementById('ticketServersText');
       const webhookServersText = document.getElementById('webhookServersText');
-      const logsCountText = document.getElementById('logsCountText');
+      const botLogsText = document.getElementById('botLogsText');
+      const serverLogsText = document.getElementById('serverLogsText');
       const updatedAt = document.getElementById('updatedAt');
       const logsUpdatedAt = document.getElementById('logsUpdatedAt');
+      const serversUpdatedAt = document.getElementById('serversUpdatedAt');
       const guildsContainer = document.getElementById('guilds');
-      const logsContainer = document.getElementById('logs');
+      const serverDetails = document.getElementById('serverDetails');
+      const botLogsContainer = document.getElementById('botLogs');
+      const serverLogsContainer = document.getElementById('serverLogs');
+      const systemActivityText = document.getElementById('systemActivityText');
+      const serverActivityText = document.getElementById('serverActivityText');
       const tabButtons = document.querySelectorAll('.tab');
       const tabPanels = document.querySelectorAll('.tab-panel');
+
+      let selectedGuildId = null;
 
       function setActiveTab(tabName) {
         tabButtons.forEach((button) => {
@@ -114,6 +185,20 @@
         return new Date(value).toLocaleString('pl-PL');
       }
 
+      function renderLogItem(entry) {
+        const item = document.createElement('div');
+        item.className = `log-item level-${entry.level || 'info'}`;
+        item.innerHTML = `
+          <div class="log-header">
+            <span class="log-badge ${entry.level || 'info'}">${(entry.level || 'info').toUpperCase()}</span>
+            <span class="log-time">${formatTimestamp(entry.timestamp)}</span>
+          </div>
+          <div class="log-meta">${entry.source === 'server' ? 'Serwer' : 'System'}${entry.command ? ` • /${entry.command}` : ''}${entry.guildId ? ` • ${entry.guildId}` : ''}</div>
+          <div class="log-message">${entry.message}</div>
+        `;
+        return item;
+      }
+
       async function loadSummary() {
         const response = await fetch('/api/dashboard-summary');
         const data = await response.json();
@@ -122,19 +207,27 @@
           statusBadge.textContent = 'Błąd';
           statusBadge.className = 'status-badge error';
           statusText.textContent = 'Nie można pobrać statusu';
+          statusTextChip.textContent = 'Błąd';
+          statusTextChip.className = 'tiny-pill error';
           return;
         }
 
         statusBadge.textContent = 'Online';
         statusBadge.className = 'status-badge online';
         statusText.textContent = 'Bot działa poprawnie';
+        statusTextChip.textContent = 'Działa';
+        statusTextChip.className = 'tiny-pill online';
         uptimeText.textContent = formatUptime(data.uptimeSeconds);
         guildsText.textContent = String(data.totalServers);
         ticketServersText.textContent = String(data.ticketServers);
         webhookServersText.textContent = String(data.webhookServers);
-        logsCountText.textContent = String(data.logsCount);
-        updatedAt.textContent = `Aktualizacja: ${formatTimestamp(data.lastUpdated)}`;
-        logsUpdatedAt.textContent = `Aktualizacja: ${formatTimestamp(data.lastUpdated)}`;
+        botLogsText.textContent = String(data.botLogs || 0);
+        serverLogsText.textContent = String(data.serverLogs || 0);
+        updatedAt.textContent = `${formatTimestamp(data.lastUpdated)}`;
+        logsUpdatedAt.textContent = `${formatTimestamp(data.lastUpdated)}`;
+        serversUpdatedAt.textContent = `${formatTimestamp(data.lastUpdated)}`;
+        systemActivityText.textContent = `${data.botLogs || 0} zdarzeń`;
+        serverActivityText.textContent = `${data.serverLogs || 0} zdarzeń`;
       }
 
       async function loadServers() {
@@ -149,47 +242,109 @@
         }
 
         data.guilds.forEach((guild) => {
-          const item = document.createElement('div');
-          item.className = 'guild-item';
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = `guild-item${selectedGuildId === guild.id ? ' active' : ''}`;
           item.innerHTML = `
-            <div>
-              <h3>${guild.name}</h3>
-              <p>ID: ${guild.id}</p>
+            <div class="guild-main">
+              <span class="guild-name">${guild.name}</span>
+              <span class="guild-id">${guild.id}</span>
             </div>
-            <div class="guild-meta">
-              <span>Użytkownicy: ${guild.memberCount ?? 'N/A'}</span>
-              <span>Kanały: ${guild.channels}</span>
-              <span>Tickety: ${guild.ticketsEnabled ? 'tak' : 'nie'}</span>
-              <span>Webhook: ${guild.webhookConfigured ? 'tak' : 'nie'}</span>
+            <div class="guild-metrics">
+              <span>${guild.memberCount ?? 'N/A'} users</span>
+              <span>${guild.stats?.commandCount ?? 0} cmd</span>
             </div>
           `;
+          item.addEventListener('click', () => {
+            selectedGuildId = guild.id;
+            renderServerDetails(guild);
+            [...guildsContainer.children].forEach((node) => node.classList.toggle('active', node === item));
+          });
           guildsContainer.appendChild(item);
         });
+
+        if (!selectedGuildId && data.guilds.length) {
+          selectedGuildId = data.guilds[0].id;
+        }
+
+        const selectedGuild = data.guilds.find((guild) => guild.id === selectedGuildId) || data.guilds[0];
+        if (selectedGuild) {
+          renderServerDetails(selectedGuild);
+        }
+      }
+
+      function renderServerDetails(guild) {
+        const stats = guild.stats || {};
+        serverDetails.innerHTML = `
+          <div class="details-header">
+            <div>
+              <p class="eyebrow small">Serwer</p>
+              <h3>${guild.name}</h3>
+            </div>
+            <span class="server-pill ${stats.status === 'warning' ? 'warning' : 'online'}">${stats.status === 'warning' ? 'Uwaga' : 'Online'}</span>
+          </div>
+
+          <div class="detail-grid">
+            <div class="mini-stat">
+              <span>Użytkownicy</span>
+              <strong>${guild.memberCount ?? 'N/A'}</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Kanały</span>
+              <strong>${guild.channels ?? 0}</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Tickety</span>
+              <strong>${guild.ticketsEnabled ? 'Tak' : 'Nie'}</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Webhook</span>
+              <strong>${guild.webhookConfigured ? 'Tak' : 'Nie'}</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Wydarzeń</span>
+              <strong>${stats.totalEvents ?? 0}</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Komend</span>
+              <strong>${stats.commandCount ?? 0}</strong>
+            </div>
+          </div>
+
+          <div class="detail-meta">
+            <div><span class="mini-label">ID serwera</span><strong>${guild.id}</strong></div>
+            <div><span class="mini-label">Ostatnie zdarzenie</span><strong>${formatTimestamp(stats.lastEvent)}</strong></div>
+          </div>
+        `;
       }
 
       async function loadLogs() {
         const response = await fetch('/api/logs');
         const data = await response.json();
 
-        logsContainer.innerHTML = '';
+        botLogsContainer.innerHTML = '';
+        serverLogsContainer.innerHTML = '';
 
         if (!data.ok || !Array.isArray(data.logs) || data.logs.length === 0) {
-          logsContainer.innerHTML = '<div class="empty">Brak logów.</div>';
+          botLogsContainer.innerHTML = '<div class="empty">Brak logów systemowych.</div>';
+          serverLogsContainer.innerHTML = '<div class="empty">Brak logów serwerów.</div>';
           return;
         }
 
-        data.logs.forEach((entry) => {
-          const item = document.createElement('div');
-          item.className = `log-item level-${entry.level || 'info'}`;
-          item.innerHTML = `
-            <div class="log-header">
-              <span class="log-badge ${entry.level || 'info'}">${(entry.level || 'info').toUpperCase()}</span>
-              <span class="log-time">${formatTimestamp(entry.timestamp)}</span>
-            </div>
-            <div class="log-message">${entry.message}</div>
-          `;
-          logsContainer.appendChild(item);
-        });
+        const botLogs = data.logs.filter((entry) => entry.source === 'bot');
+        const serverLogs = data.logs.filter((entry) => entry.source === 'server');
+
+        if (botLogs.length === 0) {
+          botLogsContainer.innerHTML = '<div class="empty">Brak logów systemowych.</div>';
+        } else {
+          botLogs.forEach((entry) => botLogsContainer.appendChild(renderLogItem(entry)));
+        }
+
+        if (serverLogs.length === 0) {
+          serverLogsContainer.innerHTML = '<div class="empty">Brak logów serwerów.</div>';
+        } else {
+          serverLogs.forEach((entry) => serverLogsContainer.appendChild(renderLogItem(entry)));
+        }
       }
 
       async function refreshDashboard() {
