@@ -16,27 +16,59 @@
         <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
       </header>
 
-      <main class="grid">
-        <section class="card">
-          <span class="label">Status</span>
-          <strong id="statusText">Sprawdzam...</strong>
-        </section>
-        <section class="card">
-          <span class="label">Czas działania</span>
-          <strong id="uptimeText">--</strong>
-        </section>
-        <section class="card">
-          <span class="label">Serwery</span>
-          <strong id="guildsText">--</strong>
-        </section>
+      <nav class="tabs" aria-label="Zakładki dashboardu">
+        <button class="tab active" data-tab="overview">Status</button>
+        <button class="tab" data-tab="servers">Serwery</button>
+        <button class="tab" data-tab="logs">Logi</button>
+      </nav>
+
+      <main id="overviewTab" class="tab-panel active">
+        <div class="grid">
+          <section class="card">
+            <span class="label">Status</span>
+            <strong id="statusText">Sprawdzam...</strong>
+          </section>
+          <section class="card">
+            <span class="label">Czas działania</span>
+            <strong id="uptimeText">--</strong>
+          </section>
+          <section class="card">
+            <span class="label">Serwery</span>
+            <strong id="guildsText">--</strong>
+          </section>
+          <section class="card">
+            <span class="label">Tickety</span>
+            <strong id="ticketServersText">--</strong>
+          </section>
+          <section class="card">
+            <span class="label">Webhooki</span>
+            <strong id="webhookServersText">--</strong>
+          </section>
+          <section class="card">
+            <span class="label">Logi</span>
+            <strong id="logsCountText">--</strong>
+          </section>
+        </div>
       </main>
 
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Lista serwerów</h2>
-          <span id="updatedAt" class="muted">--</span>
+      <section id="serversTab" class="tab-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Lista serwerów</h2>
+            <span id="updatedAt" class="muted">--</span>
+          </div>
+          <div id="guilds" class="guild-list"></div>
         </div>
-        <div id="guilds" class="guild-list"></div>
+      </section>
+
+      <section id="logsTab" class="tab-panel">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Ostatnie zdarzenia</h2>
+            <span id="logsUpdatedAt" class="muted">--</span>
+          </div>
+          <div id="logs" class="log-list"></div>
+        </div>
       </section>
     </div>
 
@@ -45,8 +77,29 @@
       const statusText = document.getElementById('statusText');
       const uptimeText = document.getElementById('uptimeText');
       const guildsText = document.getElementById('guildsText');
+      const ticketServersText = document.getElementById('ticketServersText');
+      const webhookServersText = document.getElementById('webhookServersText');
+      const logsCountText = document.getElementById('logsCountText');
       const updatedAt = document.getElementById('updatedAt');
+      const logsUpdatedAt = document.getElementById('logsUpdatedAt');
       const guildsContainer = document.getElementById('guilds');
+      const logsContainer = document.getElementById('logs');
+      const tabButtons = document.querySelectorAll('.tab');
+      const tabPanels = document.querySelectorAll('.tab-panel');
+
+      function setActiveTab(tabName) {
+        tabButtons.forEach((button) => {
+          button.classList.toggle('active', button.dataset.tab === tabName);
+        });
+
+        tabPanels.forEach((panel) => {
+          panel.classList.toggle('active', panel.id === `${tabName}Tab`);
+        });
+      }
+
+      tabButtons.forEach((button) => {
+        button.addEventListener('click', () => setActiveTab(button.dataset.tab));
+      });
 
       function formatUptime(seconds) {
         const d = Math.floor(seconds / 86400);
@@ -56,8 +109,13 @@
         return `${d}d ${h}h ${m}m ${s}s`;
       }
 
-      async function loadHealth() {
-        const response = await fetch('/api/health');
+      function formatTimestamp(value) {
+        if (!value) return '---';
+        return new Date(value).toLocaleString('pl-PL');
+      }
+
+      async function loadSummary() {
+        const response = await fetch('/api/dashboard-summary');
         const data = await response.json();
 
         if (!data.ok) {
@@ -71,8 +129,12 @@
         statusBadge.className = 'status-badge online';
         statusText.textContent = 'Bot działa poprawnie';
         uptimeText.textContent = formatUptime(data.uptimeSeconds);
-        guildsText.textContent = String(data.guilds);
-        updatedAt.textContent = `Aktualizacja: ${new Date(data.timestamp).toLocaleTimeString('pl-PL')}`;
+        guildsText.textContent = String(data.totalServers);
+        ticketServersText.textContent = String(data.ticketServers);
+        webhookServersText.textContent = String(data.webhookServers);
+        logsCountText.textContent = String(data.logsCount);
+        updatedAt.textContent = `Aktualizacja: ${formatTimestamp(data.lastUpdated)}`;
+        logsUpdatedAt.textContent = `Aktualizacja: ${formatTimestamp(data.lastUpdated)}`;
       }
 
       async function loadServers() {
@@ -105,9 +167,38 @@
         });
       }
 
-      loadHealth();
-      loadServers();
-      setInterval(() => { loadHealth(); loadServers(); }, 30000);
+      async function loadLogs() {
+        const response = await fetch('/api/logs');
+        const data = await response.json();
+
+        logsContainer.innerHTML = '';
+
+        if (!data.ok || !Array.isArray(data.logs) || data.logs.length === 0) {
+          logsContainer.innerHTML = '<div class="empty">Brak logów.</div>';
+          return;
+        }
+
+        data.logs.forEach((entry) => {
+          const item = document.createElement('div');
+          item.className = `log-item level-${entry.level || 'info'}`;
+          item.innerHTML = `
+            <div class="log-header">
+              <span class="log-badge ${entry.level || 'info'}">${(entry.level || 'info').toUpperCase()}</span>
+              <span class="log-time">${formatTimestamp(entry.timestamp)}</span>
+            </div>
+            <div class="log-message">${entry.message}</div>
+          `;
+          logsContainer.appendChild(item);
+        });
+      }
+
+      async function refreshDashboard() {
+        await Promise.all([loadSummary(), loadServers(), loadLogs()]);
+      }
+
+      setActiveTab('overview');
+      refreshDashboard();
+      setInterval(refreshDashboard, 15000);
     </script>
   </body>
 </html>
