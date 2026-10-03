@@ -449,10 +449,14 @@ function parseStrictDate(value) {
 }
 
 // --- LOGOWANIE DO PANELU: Discord OAuth2 + sprawdzanie roli na serwerze ---
-const DASH_BASE_URL = (process.env.DASHBOARD_BASE_URL || '').replace(/\/+$/, '');
+const DASH_BASE_URL = (() => {
+  let v = (process.env.DASHBOARD_BASE_URL || '').trim().replace(/^["']+|["']+$/g, '').replace(/\/+$/, '');
+  if (v && !/^https?:\/\//i.test(v)) v = `https://${v}`;
+  return v;
+})();
 const DASH_SECRET = process.env.DASHBOARD_SESSION_SECRET || '';
-const DASH_CLIENT_ID = process.env.DISCORD_APPLICATION_ID;
-const DASH_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+const DASH_CLIENT_ID = (process.env.DISCORD_APPLICATION_ID || '').trim();
+const DASH_CLIENT_SECRET = (process.env.DISCORD_CLIENT_SECRET || '').trim();
 const DASH_SESSION_MS = 6 * 60 * 60 * 1000;   // sesja ważna 6 godzin
 const DASH_RECHECK_MS = 10 * 60 * 1000;       // rola sprawdzana ponownie co 10 minut
 const DASH_AUTH_READY = Boolean(DASH_BASE_URL && DASH_SECRET.length >= 16 && DASH_CLIENT_ID && DASH_CLIENT_SECRET);
@@ -548,7 +552,7 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'login.html'));
 });
 
-app.get('/auth/discord', (_req, res) => {
+app.get('/auth/discord', (req, res) => {
   if (!DASH_AUTH_READY) return res.redirect('/login?error=config');
   const state = crypto.randomBytes(16).toString('hex');
   setCookie(res, 'dash_state', signValue({ state, exp: Date.now() + 10 * 60 * 1000 }), 10 * 60 * 1000);
@@ -559,13 +563,14 @@ app.get('/auth/discord', (_req, res) => {
     redirect_uri: `${DASH_BASE_URL}/auth/callback`,
     scope: 'identify',
     state,
-    prompt: 'none'
+    prompt: req.query.consent ? 'consent' : 'none'
   }).toString();
   res.redirect(url.toString());
 });
 
 app.get('/auth/callback', async (req, res) => {
   if (!DASH_AUTH_READY) return res.redirect('/login?error=config');
+  if (['interaction_required', 'consent_required', 'login_required'].includes(req.query.error)) return res.redirect('/auth/discord?consent=1');
   if (req.query.error) return res.redirect('/login?error=anulowano');
 
   const saved = readSigned(parseCookies(req).dash_state);
