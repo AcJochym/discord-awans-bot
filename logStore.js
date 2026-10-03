@@ -28,7 +28,7 @@ export async function initLogStore() {
     return;
   }
   try {
-    pool = new pg.Pool({ connectionString: url, max: 5, ssl: sslFor(url) });
+    pool = new pg.Pool({ connectionString: url, max: 5, ssl: sslFor(url), connectionTimeoutMillis: 5000 });
     pool.on('error', (e) => console.error('Błąd połączenia z bazą logów:', e.message));
     await pool.query(`
       CREATE TABLE IF NOT EXISTS dashboard_logs (
@@ -44,6 +44,11 @@ export async function initLogStore() {
       CREATE INDEX IF NOT EXISTS idx_dashboard_logs_ts ON dashboard_logs (ts DESC);
       CREATE INDEX IF NOT EXISTS idx_dashboard_logs_source_ts ON dashboard_logs (source, ts DESC);
       CREATE INDEX IF NOT EXISTS idx_dashboard_logs_guild_ts ON dashboard_logs (guild_id, ts DESC);
+      CREATE TABLE IF NOT EXISTS server_configs (
+        guild_id TEXT PRIMARY KEY,
+        settings JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
     ready = true;
     for (const row of pending.splice(0)) persist(row);
@@ -56,6 +61,22 @@ export async function initLogStore() {
   } finally {
     initDone = true;
   }
+}
+
+export async function readServerConfigs() {
+  if (!ready) return [];
+  const result = await pool.query('SELECT guild_id, settings FROM server_configs');
+  return result.rows;
+}
+
+export async function writeServerConfig(guildId, settings) {
+  if (!ready) throw new Error('PostgreSQL is unavailable');
+  await pool.query(`
+    INSERT INTO server_configs (guild_id, settings, updated_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (guild_id) DO UPDATE
+    SET settings = EXCLUDED.settings, updated_at = NOW()
+  `, [guildId, settings]);
 }
 
 async function purgeOld() {
