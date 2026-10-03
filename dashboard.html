@@ -218,6 +218,7 @@
           </div>
           <div class="filter-group actions">
             <button type="button" id="resetFilters" class="ghost-btn">Wyczyść</button>
+            <button type="button" id="clearLogsBtn" class="ghost-btn danger-btn" hidden>Usuń wszystkie logi</button>
             <a id="exportBtn" class="ghost-btn" href="#" download>Eksport CSV</a>
           </div>
         </div>
@@ -265,6 +266,20 @@
           <dl id="pfInfo" class="pf-info"></dl>
           <h4 class="pf-sub">Role na serwerze</h4>
           <div id="pfRoles" class="pf-roles"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="clearLogsModal" class="modal" hidden>
+      <div class="modal-card glass-card confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="clearLogsTitle" aria-describedby="clearLogsDescription">
+        <div class="confirm-body">
+          <h2 id="clearLogsTitle">Wyczyścić wszystkie logi?</h2>
+          <p id="clearLogsDescription">Ta operacja usunie historię logów z bazy i pamięci bota. Nie można jej cofnąć.</p>
+          <p id="clearLogsStatus" class="config-message" role="status" aria-live="polite"></p>
+          <div class="confirm-actions">
+            <button type="button" id="cancelClearLogs" class="ghost-btn">Anuluj</button>
+            <button type="button" id="confirmClearLogs" class="ghost-btn danger-btn">Usuń logi</button>
+          </div>
         </div>
       </div>
     </div>
@@ -364,6 +379,10 @@
       function renderLogItem(entry, index = 0) {
         const item = document.createElement('div');
         item.className = `log-item level-${entry.level || 'info'}`;
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.setAttribute('aria-expanded', 'false');
+        item.setAttribute('aria-label', `Pokaż szczegóły logu: ${entry.message || entry.command || 'zdarzenie'}`);
         if (animateLists) { item.classList.add('enter'); item.style.setProperty('--i', Math.min(index, 12)); }
 
         const guildName = entry.guildId ? guildNameMap.get(entry.guildId) : null;
@@ -378,7 +397,44 @@
           </div>
           <div class="log-meta">${esc(roomLabel)}${entry.command ? ` • /${esc(entry.command)}` : ''}${entry.guildId && !guildName ? ` • ${esc(entry.guildId)}` : ''}</div>
           <div class="log-message">${esc(entry.message)}</div>
+          <div class="log-extra" hidden></div>
         `;
+
+        const extra = item.querySelector('.log-extra');
+        const details = entry.meta && typeof entry.meta === 'object' ? entry.meta : {};
+        const addDetail = (label, value) => {
+          const row = document.createElement('div');
+          row.className = 'log-detail-row';
+          const key = document.createElement('span');
+          key.className = 'log-detail-key';
+          key.textContent = label;
+          const content = document.createElement('span');
+          content.className = 'log-detail-value';
+          content.textContent = typeof value === 'string' ? value : JSON.stringify(value);
+          row.append(key, content);
+          extra.appendChild(row);
+        };
+
+        if (details.userId) addDetail('Użytkownik', `<@${details.userId}> • ${details.userId}`);
+        if (details.channelId) addDetail('Kanał', `<#${details.channelId}> • ${details.channelId}`);
+        if (details.options && typeof details.options === 'object') {
+          Object.entries(details.options).forEach(([key, value]) => addDetail(key, value));
+        }
+        Object.entries(details)
+          .filter(([key]) => !['userId', 'channelId', 'options'].includes(key))
+          .forEach(([key, value]) => addDetail(key, value));
+        if (!extra.children.length) addDetail('Szczegóły', 'Brak dodatkowych danych w tym wpisie.');
+
+        const toggleDetails = () => {
+          extra.hidden = !extra.hidden;
+          item.setAttribute('aria-expanded', String(!extra.hidden));
+        };
+        item.addEventListener('click', toggleDetails);
+        item.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleDetails();
+        });
         return item;
       }
 
@@ -396,6 +452,7 @@
           const data = await (await apiFetch('/api/me')).json();
           if (!data.ok) return;
           document.getElementById('configTabButton').hidden = !data.isBotOwner;
+          document.getElementById('clearLogsBtn').hidden = !data.isBotOwner;
           document.getElementById('userAvatar').src = data.avatarUrl;
           document.getElementById('userName').textContent = data.name;
           document.getElementById('userChip').hidden = false;
@@ -1070,6 +1127,42 @@
         Object.assign(F, { range: '24h', from: '', to: '', source: '', guild: '', level: '', q: '' });
         document.getElementById('searchInput').value = '';
         reloadActivity();
+      });
+
+      const clearLogsModal = document.getElementById('clearLogsModal');
+      const clearLogsStatus = document.getElementById('clearLogsStatus');
+      const confirmClearLogsBtn = document.getElementById('confirmClearLogs');
+      function closeClearLogsModal() {
+        if (clearLogsModal.hidden) return;
+        clearLogsModal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+        setTimeout(() => { clearLogsModal.hidden = true; }, 260);
+      }
+
+      document.getElementById('clearLogsBtn').addEventListener('click', () => {
+        clearLogsStatus.textContent = '';
+        confirmClearLogsBtn.disabled = false;
+        clearLogsModal.hidden = false;
+        document.body.classList.add('modal-open');
+        requestAnimationFrame(() => clearLogsModal.classList.add('open'));
+        confirmClearLogsBtn.focus();
+      });
+      document.getElementById('cancelClearLogs').addEventListener('click', closeClearLogsModal);
+      clearLogsModal.addEventListener('click', (event) => { if (event.target === clearLogsModal) closeClearLogsModal(); });
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeClearLogsModal(); });
+      confirmClearLogsBtn.addEventListener('click', async () => {
+        confirmClearLogsBtn.disabled = true;
+        clearLogsStatus.textContent = 'Usuwanie logów…';
+        try {
+          const response = await apiFetch('/api/logs', { method: 'DELETE' });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wyczyścić logów.');
+          closeClearLogsModal();
+          await Promise.all([reloadActivity(), loadSummary()]);
+        } catch (error) {
+          clearLogsStatus.textContent = error.message;
+          confirmClearLogsBtn.disabled = false;
+        }
       });
       loadMoreBtn.addEventListener('click', async () => { loadMoreBtn.disabled = true; try { await loadMorePage(); } finally { loadMoreBtn.disabled = false; } });
 
