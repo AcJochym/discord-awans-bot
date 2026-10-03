@@ -234,6 +234,8 @@
         button.addEventListener('click', () => setActiveTab(button.dataset.tab));
       });
 
+      const fmtNum = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('pl-PL'));
+
       function formatUptime(seconds) {
         const d = Math.floor(seconds / 86400);
         const h = Math.floor((seconds % 86400) / 3600);
@@ -481,8 +483,8 @@
               <span class="guild-id">${esc(guild.id)}</span>
             </div>
             <div class="guild-metrics">
-              <span>${guild.memberCount ?? 'N/A'} users</span>
-              <span>${guild.stats?.commandCount ?? 0} cmd</span>
+              <span>${fmtNum(guild.memberCount)} osób</span>
+              <span>${guild.stats?.commandCount ?? 0} komend</span>
             </div>
           `;
           item.addEventListener('click', () => {
@@ -522,7 +524,7 @@
           <div class="detail-grid">
             <div class="mini-stat">
               <span>Użytkownicy</span>
-              <strong>${guild.memberCount ?? 'N/A'}</strong>
+              <strong>${fmtNum(guild.memberCount)}</strong>
             </div>
             <div class="mini-stat">
               <span>Kanały</span>
