@@ -3,15 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Law Enforcement Panel</title>
+    <title>frakcyjny-bot Panel</title>
+    <meta name="color-scheme" content="dark" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/dashboard.css" />
   </head>
   <body>
     <div class="dashboard-shell">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Law Enforcement</p>
-          <h1>Panel administracyjny</h1>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <h1>Panel administracyjny</h1>
+            <p class="subtitle">frakcyjny-bot</p>
+          </div>
         </div>
         <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
       </header>
@@ -155,23 +162,15 @@
       const serverActivityText = document.getElementById('serverActivityText');
       const tabButtons = document.querySelectorAll('.tab');
       const tabPanels = document.querySelectorAll('.tab-panel');
-      const liquidInteractive = document.querySelectorAll('.glass-card, .guild-item, .tab');
-
-      liquidInteractive.forEach((element) => {
-        element.addEventListener('pointermove', (event) => {
-          const rect = element.getBoundingClientRect();
-          const x = ((event.clientX - rect.left) / rect.width) * 100;
-          const y = ((event.clientY - rect.top) / rect.height) * 100;
-          element.style.setProperty('--mx', `${x}%`);
-          element.style.setProperty('--my', `${y}%`);
-        });
-
-        element.addEventListener('pointerleave', () => {
-          element.style.setProperty('--mx', '50%');
-          element.style.setProperty('--my', '50%');
-        });
+      document.addEventListener('pointermove', (event) => {
+        const el = event.target.closest('.glass-card, .guild-item, .tab, .mini-stat, .log-item');
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        el.style.setProperty('--mx', `${((event.clientX - rect.left) / rect.width) * 100}%`);
+        el.style.setProperty('--my', `${((event.clientY - rect.top) / rect.height) * 100}%`);
       });
 
+      const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       let selectedGuildId = null;
       const guildNameMap = new Map();
 
@@ -213,11 +212,11 @@
 
         item.innerHTML = `
           <div class="log-header">
-            <span class="log-badge ${entry.level || 'info'}">${(entry.level || 'info').toUpperCase()}</span>
+            <span class="log-badge ${esc(entry.level || 'info')}">${esc(entry.level || 'info')}</span>
             <span class="log-time">${formatTimestamp(entry.timestamp)}</span>
           </div>
-          <div class="log-meta">${roomLabel}${entry.command ? ` • /${entry.command}` : ''}${entry.guildId && !guildName ? ` • ${entry.guildId}` : ''}</div>
-          <div class="log-message">${entry.message}</div>
+          <div class="log-meta">${esc(roomLabel)}${entry.command ? ` • /${esc(entry.command)}` : ''}${entry.guildId && !guildName ? ` • ${esc(entry.guildId)}` : ''}</div>
+          <div class="log-message">${esc(entry.message)}</div>
         `;
         return item;
       }
@@ -275,8 +274,8 @@
           item.className = `guild-item${selectedGuildId === guild.id ? ' active' : ''}`;
           item.innerHTML = `
             <div class="guild-main">
-              <span class="guild-name">${guild.name}</span>
-              <span class="guild-id">${guild.id}</span>
+              <span class="guild-name">${esc(guild.name)}</span>
+              <span class="guild-id">${esc(guild.id)}</span>
             </div>
             <div class="guild-metrics">
               <span>${guild.memberCount ?? 'N/A'} users</span>
@@ -306,8 +305,7 @@
         serverDetails.innerHTML = `
           <div class="details-header">
             <div>
-              <p class="eyebrow small">Serwer</p>
-              <h3>${guild.name}</h3>
+              <h3>${esc(guild.name)}</h3>
             </div>
             <span class="server-pill ${stats.status === 'warning' ? 'warning' : 'online'}">${stats.status === 'warning' ? 'Uwaga' : 'Online'}</span>
           </div>
@@ -340,7 +338,7 @@
           </div>
 
           <div class="detail-meta">
-            <div><span class="mini-label">ID serwera</span><strong>${guild.id}</strong></div>
+            <div><span class="mini-label">ID serwera</span><strong>${esc(guild.id)}</strong></div>
             <div><span class="mini-label">Ostatnie zdarzenie</span><strong>${formatTimestamp(stats.lastEvent)}</strong></div>
           </div>
         `;
