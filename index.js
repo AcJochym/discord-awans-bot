@@ -527,6 +527,27 @@ async function userHasDashboardAccess(userId) {
   return false;
 }
 
+// --- Obecność administratorów i powiadomienia o logowaniu (trzymane w pamięci) ---
+const dashPresence = new Map();
+const dashEvents = [];
+let dashEventSeq = 0;
+const DASH_ONLINE_MS = 90 * 1000; // uznajemy za online, jeśli panel odpytał serwer w ostatnich 90 s
+
+function dashAvatarUrl(id, avatar) {
+  return avatar
+    ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64`
+    : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(id) >> 22n) % 6n)}.png`;
+}
+
+function touchDashboardPresence(user) {
+  dashPresence.set(user.id, { id: user.id, name: user.name, avatarUrl: dashAvatarUrl(user.id, user.avatar), lastSeen: Date.now() });
+}
+
+function pushDashboardEvent(type, user) {
+  dashEvents.push({ seq: ++dashEventSeq, type, userId: user.id, name: user.name, avatarUrl: dashAvatarUrl(user.id, user.avatar), at: new Date().toISOString() });
+  if (dashEvents.length > 50) dashEvents.shift();
+}
+
 async function requireDashboardAuth(req, res, next) {
   const isApi = req.path.startsWith('/api/');
   const deny = (code) => (isApi ? res.status(401).json({ ok: false, error: 'unauthorized' }) : res.redirect(`/login${code ? `?error=${code}` : ''}`));
@@ -544,6 +565,7 @@ async function requireDashboardAuth(req, res, next) {
     setCookie(res, 'dash_session', signValue(session), session.exp - Date.now());
   }
   req.dashUser = session;
+  touchDashboardPresence(session);
   next();
 }
 
@@ -605,6 +627,8 @@ app.get('/auth/callback', async (req, res) => {
     const now = Date.now();
     setCookie(res, 'dash_session', signValue({ id: user.id, name: displayName, avatar: user.avatar || null, checked: now, exp: now + DASH_SESSION_MS }), DASH_SESSION_MS);
     addDashboardLog('info', `Zalogowano do panelu: ${displayName} (${user.id}).`, { source: 'bot' });
+    touchDashboardPresence({ id: user.id, name: displayName, avatar: user.avatar || null });
+    pushDashboardEvent('login', { id: user.id, name: displayName, avatar: user.avatar || null });
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Błąd logowania do panelu:', error.message);
@@ -612,17 +636,27 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-app.post('/auth/logout', (_req, res) => {
+app.post('/auth/logout', (req, res) => {
+  const session = readSigned(parseCookies(req).dash_session);
+  if (session) dashPresence.delete(session.id);
   setCookie(res, 'dash_session', '', 0);
   res.json({ ok: true });
 });
 
 app.get('/api/me', requireDashboardAuth, (req, res) => {
   const { id, name, avatar } = req.dashUser;
-  const avatarUrl = avatar
-    ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64`
-    : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(id) >> 22n) % 6n)}.png`;
-  res.json({ ok: true, id, name, avatarUrl });
+  res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar) });
+});
+
+app.get('/api/presence', requireDashboardAuth, (req, res) => {
+  const now = Date.now();
+  for (const [id, entry] of dashPresence) {
+    if (now - entry.lastSeen > DASH_ONLINE_MS) dashPresence.delete(id);
+  }
+  const since = Number.parseInt(req.query.since, 10);
+  const events = Number.isFinite(since) ? dashEvents.filter((event) => event.seq > since) : [];
+  const online = [...dashPresence.values()].map(({ id, name, avatarUrl }) => ({ id, name, avatarUrl }));
+  res.json({ ok: true, count: online.length, online, events, lastSeq: dashEventSeq });
 });
 
 app.get('/dashboard', requireDashboardAuth, (_req, res) => {
