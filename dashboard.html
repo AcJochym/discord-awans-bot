@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DC Bot Panel</title>
+    <title>frakcyjny-bot Panel</title>
     <link rel="stylesheet" href="/dashboard.css" />
   </head>
   <body>
     <div class="dashboard-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Discord Bot</p>
+          <p class="eyebrow">frakcyjny-bot</p>
           <h1>Panel administracyjny</h1>
         </div>
         <span id="statusBadge" class="status-badge loading">Ładowanie...</span>
@@ -155,8 +155,25 @@
       const serverActivityText = document.getElementById('serverActivityText');
       const tabButtons = document.querySelectorAll('.tab');
       const tabPanels = document.querySelectorAll('.tab-panel');
+      const liquidInteractive = document.querySelectorAll('.glass-card, .guild-item, .tab');
+
+      liquidInteractive.forEach((element) => {
+        element.addEventListener('pointermove', (event) => {
+          const rect = element.getBoundingClientRect();
+          const x = ((event.clientX - rect.left) / rect.width) * 100;
+          const y = ((event.clientY - rect.top) / rect.height) * 100;
+          element.style.setProperty('--mx', `${x}%`);
+          element.style.setProperty('--my', `${y}%`);
+        });
+
+        element.addEventListener('pointerleave', () => {
+          element.style.setProperty('--mx', '50%');
+          element.style.setProperty('--my', '50%');
+        });
+      });
 
       let selectedGuildId = null;
+      const guildNameMap = new Map();
 
       function setActiveTab(tabName) {
         tabButtons.forEach((button) => {
@@ -188,12 +205,18 @@
       function renderLogItem(entry) {
         const item = document.createElement('div');
         item.className = `log-item level-${entry.level || 'info'}`;
+
+        const guildName = entry.guildId ? guildNameMap.get(entry.guildId) : null;
+        const roomLabel = entry.source === 'server'
+          ? (guildName ? `Serwer • ${guildName}` : 'Serwer')
+          : 'System';
+
         item.innerHTML = `
           <div class="log-header">
             <span class="log-badge ${entry.level || 'info'}">${(entry.level || 'info').toUpperCase()}</span>
             <span class="log-time">${formatTimestamp(entry.timestamp)}</span>
           </div>
-          <div class="log-meta">${entry.source === 'server' ? 'Serwer' : 'System'}${entry.command ? ` • /${entry.command}` : ''}${entry.guildId ? ` • ${entry.guildId}` : ''}</div>
+          <div class="log-meta">${roomLabel}${entry.command ? ` • /${entry.command}` : ''}${entry.guildId && !guildName ? ` • ${entry.guildId}` : ''}</div>
           <div class="log-message">${entry.message}</div>
         `;
         return item;
@@ -240,6 +263,11 @@
           guildsContainer.innerHTML = '<div class="empty">Brak podłączonych serwerów.</div>';
           return;
         }
+
+        guildNameMap.clear();
+        data.guilds.forEach((guild) => {
+          guildNameMap.set(guild.id, guild.name);
+        });
 
         data.guilds.forEach((guild) => {
           const item = document.createElement('button');
