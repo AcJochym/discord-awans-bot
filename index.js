@@ -191,9 +191,10 @@ const pendingUrlopMessages = new Set();
 const usersWithPendingUrlop = new Set();
 
 // Funkcja do pobrania info o guildzie (nazwa)
-async function getGuildInfo(guildId) {
+async function getGuildInfo(guildId, withCounts = false) {
   try {
-    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+    // Bez with_counts Discord NIE zwraca approximate_member_count
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}${withCounts ? '?with_counts=true' : ''}`, {
       headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
     });
     if (!res.ok) {
@@ -714,13 +715,13 @@ app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   try {
     const guilds = [];
     for (const [guildId, cfg] of Object.entries(serverConfigs)) {
-      const guildInfo = await getGuildInfo(guildId);
+      const guildInfo = await getGuildInfo(guildId, true);
       const guildLogs = dashboardLogs.filter((log) => log.guildId === guildId);
       const commandCount = guildLogs.filter((log) => log.command).length;
       guilds.push({
         id: guildId,
         name: guildInfo?.name || 'Nieznany serwer',
-        memberCount: guildInfo?.approximate_member_count ?? null,
+        memberCount: guildInfo?.approximate_member_count ?? discordClient.guilds.cache.get(guildId)?.memberCount ?? null,
         channels: cfg.CHANNELS ? Object.keys(cfg.CHANNELS).length : 0,
         ticketsEnabled: Boolean(cfg.TICKETS),
         webhookConfigured: Boolean(cfg.WEBHOOK_URL),
