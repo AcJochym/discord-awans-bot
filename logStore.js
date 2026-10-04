@@ -102,7 +102,7 @@ export async function saveArchivedTicket(ticket, messages) {
     ON CONFLICT (channel_id) DO UPDATE SET
       guild_id = EXCLUDED.guild_id, deleted_at = EXCLUDED.deleted_at,
       ticket = EXCLUDED.ticket, messages = EXCLUDED.messages
-  `, [row.channelId, row.guildId, row.deletedAt, row.ticket, row.messages]);
+  `, [row.channelId, row.guildId, row.deletedAt, JSON.stringify(row.ticket), JSON.stringify(row.messages)]);
 }
 
 export async function listArchivedTickets(guildId) {
