@@ -6,6 +6,7 @@ const RETENTION_DAYS = Math.max(1, Number.parseInt(process.env.LOG_RETENTION_DAY
 const memory = [];   // najnowsze na początku
 const pending = [];  // logi dodane zanim baza była gotowa
 const archivedTickets = new Map();
+const absenceMemory = new Map();
 let pool = null;
 let ready = false;
 let initDone = false;
@@ -60,6 +61,19 @@ export async function initLogStore() {
         messages JSONB NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_archived_tickets_guild_deleted ON archived_tickets (guild_id, deleted_at DESC);
+      CREATE TABLE IF NOT EXISTS staff_absences (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('vacation', 'suspension')),
+        reason TEXT NOT NULL DEFAULT '',
+        starts_on DATE NOT NULL,
+        returns_on DATE,
+        reminder_sent_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_staff_absences_return ON staff_absences (returns_on) WHERE reminder_sent_at IS NULL;
     `);
     ready = true;
     for (const row of pending.splice(0)) persist(row);
@@ -119,6 +133,63 @@ export async function getArchivedTicket(channelId, guildId) {
   const result = await pool.query('SELECT channel_id, guild_id, deleted_at, ticket, messages FROM archived_tickets WHERE channel_id = $1 AND guild_id = $2', [String(channelId), String(guildId)]);
   const row = result.rows[0];
   return row ? { channelId: row.channel_id, guildId: row.guild_id, deletedAt: new Date(row.deleted_at).toISOString(), ticket: row.ticket, messages: row.messages } : null;
+}
+
+const absenceFromRow = (row) => ({
+  id: row.id, guildId: row.guild_id, userId: row.user_id, displayName: row.display_name,
+  kind: row.kind, reason: row.reason, startsOn: String(row.starts_on).slice(0, 10),
+  returnsOn: row.returns_on ? String(row.returns_on).slice(0, 10) : null,
+  reminderSentAt: row.reminder_sent_at ? new Date(row.reminder_sent_at).toISOString() : null
+});
+
+export async function saveAbsence(absence) {
+  const row = {
+    id: String(absence.id), guildId: String(absence.guildId), userId: String(absence.userId),
+    displayName: String(absence.displayName || absence.userId), kind: absence.kind,
+    reason: String(absence.reason || '').slice(0, 1000), startsOn: String(absence.startsOn),
+    returnsOn: absence.returnsOn ? String(absence.returnsOn) : null, reminderSentAt: null
+  };
+  if (!ready) {
+    absenceMemory.set(row.id, row);
+    return;
+  }
+  await pool.query(`
+    INSERT INTO staff_absences (id, guild_id, user_id, display_name, kind, reason, starts_on, returns_on)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (id) DO NOTHING
+  `, [row.id, row.guildId, row.userId, row.displayName, row.kind, row.reason, row.startsOn, row.returnsOn]);
+}
+
+export async function listActiveAbsences(today, guildId = null) {
+  if (!ready) return [...absenceMemory.values()]
+    .filter((row) => (!guildId || row.guildId === String(guildId)) && (!row.returnsOn || row.returnsOn >= today))
+    .sort((a, b) => (a.returnsOn || '9999-12-31').localeCompare(b.returnsOn || '9999-12-31'));
+  const params = [today];
+  const guildFilter = guildId ? (params.push(String(guildId)), ` AND guild_id = $${params.length}`) : '';
+  const result = await pool.query(`
+    SELECT id, guild_id, user_id, display_name, kind, reason, starts_on::text AS starts_on, returns_on::text AS returns_on, reminder_sent_at
+    FROM staff_absences WHERE (returns_on IS NULL OR returns_on >= $1)${guildFilter}
+    ORDER BY returns_on NULLS LAST, starts_on
+  `, params);
+  return result.rows.map(absenceFromRow);
+}
+
+export async function listAbsenceReminders(today) {
+  if (!ready) return [...absenceMemory.values()].filter((row) => row.returnsOn === today && !row.reminderSentAt);
+  const result = await pool.query(`
+    SELECT id, guild_id, user_id, display_name, kind, reason, starts_on::text AS starts_on, returns_on::text AS returns_on, reminder_sent_at
+    FROM staff_absences WHERE returns_on = $1 AND reminder_sent_at IS NULL
+  `, [today]);
+  return result.rows.map(absenceFromRow);
+}
+
+export async function markAbsenceReminderSent(id) {
+  if (!ready) {
+    const row = absenceMemory.get(String(id));
+    if (row) row.reminderSentAt = new Date().toISOString();
+    return;
+  }
+  await pool.query('UPDATE staff_absences SET reminder_sent_at = NOW() WHERE id = $1 AND reminder_sent_at IS NULL', [String(id)]);
 }
 
 async function purgeOld() {
