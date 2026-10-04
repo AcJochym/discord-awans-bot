@@ -56,6 +56,7 @@
         <button class="tab" data-tab="servers">Serwery</button>
         <button class="tab" data-tab="logs">Logi</button>
         <button class="tab" data-tab="tickets">Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
+        <button class="tab" data-tab="absences">Urlopy i zawieszenia</button>
         <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
@@ -210,6 +211,27 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="absencesTab" class="tab-panel">
+        <div class="glass-card absence-panel">
+          <div class="panel-header absence-header">
+            <div>
+              <h2>Urlopy i zawieszenia</h2>
+              <p class="muted">Bieżące okresy i zaplanowane powroty.</p>
+            </div>
+            <label class="absence-filter" for="absenceGuild">Serwer
+              <select id="absenceGuild" aria-label="Filtruj po serwerze"><option value="">Wszystkie serwery</option></select>
+            </label>
+          </div>
+          <div id="absenceSummary" class="absence-summary muted" role="status">Ładowanie…</div>
+          <div class="absence-table-wrap">
+            <table class="absence-table">
+              <thead><tr><th>Osoba</th><th>Rodzaj</th><th>Status</th><th>Od</th><th>Powrót</th><th>Powód</th><th>Serwer</th></tr></thead>
+              <tbody id="absenceRows"><tr><td colspan="7" class="muted">Ładowanie…</td></tr></tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -443,6 +465,7 @@
         });
         moveGlider();
         if (tabName === 'config') loadConfigTab();
+        if (tabName === 'absences') loadAbsences();
       }
 
       tabButtons.forEach((button) => {
@@ -1378,6 +1401,64 @@
           renderTicketList();
         } catch (_) { /* przekierowanie obsłuży apiFetch */ }
       }
+
+      const absenceGuild = document.getElementById('absenceGuild');
+      const absenceRows = document.getElementById('absenceRows');
+      const absenceSummary = document.getElementById('absenceSummary');
+      const absenceDateLabel = (value) => value
+        ? new Date(`${value}T12:00:00Z`).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Warsaw' })
+        : 'Nieustalony termin';
+
+      async function loadAbsences() {
+        const selectedGuild = absenceGuild.value;
+        const query = selectedGuild ? `?guild=${encodeURIComponent(selectedGuild)}` : '';
+        try {
+          const response = await apiFetch(`/api/absences${query}`);
+          const data = await response.json().catch(() => ({ ok: false }));
+          if (!data.ok) throw new Error(data.error || 'Nie udało się pobrać listy.');
+          const guildsSignature = JSON.stringify(data.guilds);
+          if (absenceGuild.dataset.signature !== guildsSignature) {
+            absenceGuild.dataset.signature = guildsSignature;
+            absenceGuild.replaceChildren(new Option('Wszystkie serwery', ''), ...data.guilds.map((guild) => new Option(guild.name, guild.id)));
+          }
+          absenceGuild.value = selectedGuild;
+          absenceRows.replaceChildren();
+          absenceSummary.textContent = `${data.absences.length} ${data.absences.length === 1 ? 'osoba' : 'osób'} na urlopie lub zawieszeniu`;
+          if (!data.absences.length) {
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = 7;
+            cell.className = 'muted absence-empty';
+            cell.textContent = 'Brak aktywnych urlopów i zawieszeń.';
+            row.appendChild(cell);
+            absenceRows.appendChild(row);
+            return;
+          }
+          data.absences.forEach((absence) => {
+            const row = document.createElement('tr');
+            const values = [
+              absence.displayName,
+              absence.kind === 'vacation' ? 'Urlop' : 'Zawieszenie',
+              absence.status === 'upcoming' ? 'Nadchodzący' : 'Trwa',
+              absenceDateLabel(absence.startsOn),
+              absenceDateLabel(absence.returnsOn),
+              absence.reason || '—',
+              absence.guildName
+            ];
+            values.forEach((value) => {
+              const cell = document.createElement('td');
+              cell.textContent = value;
+              row.appendChild(cell);
+            });
+            row.className = `absence-row ${absence.status}`;
+            absenceRows.appendChild(row);
+          });
+        } catch (error) {
+          absenceRows.replaceChildren();
+          absenceSummary.textContent = error.message || 'Nie udało się pobrać listy.';
+        }
+      }
+      absenceGuild.addEventListener('change', loadAbsences);
 
       tkEl('tkGuild').addEventListener('change', (e) => { tk.guild = e.target.value; tk.listSig = ''; tk.current = null; tkEl('tkPane').hidden = true; tkEl('tkEmpty').hidden = false; tkEl('tkLayout').classList.remove('tk-open'); loadTickets(); });
       tkEl('tkState').addEventListener('click', (e) => {
