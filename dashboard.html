@@ -583,7 +583,7 @@
         toast.setAttribute('role', 'status');
 
         const img = document.createElement('img');
-        img.src = event.avatarUrl;
+        img.src = event.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
         img.alt = '';
 
         const body = document.createElement('div');
@@ -591,7 +591,7 @@
         const name = document.createElement('strong');
         name.textContent = event.name;
         const text = document.createElement('span');
-        text.textContent = 'zalogował(a) się do panelu';
+        text.textContent = event.text || 'zalogował(a) się do panelu';
         body.append(name, text);
 
         const bar = document.createElement('i');
@@ -891,7 +891,7 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
 
       /* --- Tickety w panelu: lista, rozmowa jak na Discordzie, odpowiadanie --- */
-      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, atBottom: true };
+      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, ownSentMessageIds: new Set(), notifiedMessageIds: new Set(), latestMessageByTicket: new Map(), notificationBaselineReady: false, notificationBusy: false, atBottom: true };
       const tkEl = (id) => document.getElementById(id);
       const tkList = tkEl('tkList');
       const tkMsgs = tkEl('tkMsgs');
@@ -1069,6 +1069,31 @@
 
       function tkSetNotice(text) { const n = tkEl('tkNotice'); n.textContent = text || ''; n.hidden = !text; }
 
+      function tkToast(text, ticket = tk.current) {
+        showToast({ name: ticket?.name ? `#${ticket.name}` : 'Ticket', avatarUrl: ticket?.ownerAvatar, text });
+      }
+
+      function tkNotifyNewMessages(ticket, messages, previousId) {
+        const fresh = messages.filter((message) => idGt(message.id, previousId) && !tk.notifiedMessageIds.has(message.id));
+        if (!fresh.length) return;
+        fresh.forEach((message) => {
+          tk.notifiedMessageIds.add(message.id);
+          if (tk.notifiedMessageIds.size > 3000) tk.notifiedMessageIds.delete(tk.notifiedMessageIds.values().next().value);
+        });
+        const incoming = fresh.filter((message) => {
+          const ownPanelMessage = tk.ownSentMessageIds.delete(message.id);
+          return !message.mine && !ownPanelMessage && (!message.author.bot || message.panelReply);
+        });
+        if (!incoming.length) return;
+        const latest = incoming[incoming.length - 1];
+        const panelReply = latest.embeds.find((embed) => embed.footer === 'Odpowiedź z panelu');
+        const senderName = panelReply?.author?.name || latest.author.name;
+        const senderAvatar = panelReply?.author?.icon || latest.author.avatarUrl || ticket.ownerAvatar;
+        const count = incoming.length;
+        const messageText = count > 1 ? `${count} nowe wiadomości w tickecie` : `Nowa wiadomość w tickecie`;
+        showToast({ name: senderName, avatarUrl: senderAvatar, text: `${messageText} #${ticket.name}` });
+      }
+
       function tkApplyHeader(t, canSend) {
         tkEl('tkOwnerAv').src = t.ownerAvatar;
         tkEl('tkTitle').textContent = `#${t.name}`;
@@ -1146,7 +1171,12 @@
             body: JSON.stringify({ action, reason: action === 'close' ? 'Zamknięto z panelu' : '' })
           });
           const result = await response.json().catch(() => ({ ok: false, error: 'Serwer nie zwrócił poprawnej odpowiedzi.' }));
-          if (!result.ok) { tkSetNotice(result.error || 'Nie udało się wykonać akcji.'); return; }
+          if (!result.ok) { tkToast(result.error || 'Nie udało się wykonać akcji.'); return; }
+          const successText = {
+            close: 'Ticket zamknięty', claim: 'Ticket przejęty', unclaim: 'Ticket oddany',
+            reopen: 'Ticket otwarty ponownie', delete: 'Ticket usunięty i przeniesiony do archiwum'
+          }[action];
+          tkToast(successText);
           if (action === 'delete') {
             tkEl('tkState').querySelector('[data-v="deleted"]').click();
             return;
@@ -1154,7 +1184,7 @@
           await loadTickets();
           await openTicket(ticketId);
         } catch (_) {
-          tkSetNotice('Nie udało się wykonać akcji. Spróbuj ponownie.');
+          tkToast('Nie udało się wykonać akcji. Spróbuj ponownie.');
         } finally {
           tk.actionBusy = false;
           tkEl('tkActions').querySelectorAll('button').forEach((button) => { button.disabled = false; });
@@ -1174,9 +1204,44 @@
         if (!batch.length) return;
         const first = batch[0].id;
         const lastLocal = tk.msgs[tk.msgs.length - 1];
+        if (lastLocal) tkNotifyNewMessages(data.ticket, batch, lastLocal.id);
         if (lastLocal && idGt(first, lastLocal.id) && batch.length >= 60) { tk.msgs = batch; tk.fresh = true; }
         else tk.msgs = [...tk.msgs.filter((m) => !idGt(m.id, first) && m.id !== first), ...batch];
         syncMessages();
+      }
+
+      async function tkPollNotifications() {
+        if (tk.notificationBusy || document.hidden || !tk.guild) return;
+        tk.notificationBusy = true;
+        try {
+          const response = await apiFetch(`/api/tickets?guild=${encodeURIComponent(tk.guild)}`);
+          const data = await response.json().catch(() => ({ ok: false }));
+          if (!data.ok) return;
+          if (!tk.notificationBaselineReady) {
+            data.tickets.forEach((ticket) => tk.latestMessageByTicket.set(ticket.id, ticket.lastMessageId || ticket.id));
+            tk.notificationBaselineReady = true;
+            return;
+          }
+          const changed = data.tickets.filter((ticket) => {
+            const latestId = ticket.lastMessageId || ticket.id;
+            const previousId = tk.latestMessageByTicket.get(ticket.id);
+            return previousId && idGt(latestId, previousId);
+          }).slice(0, 6);
+          await Promise.all(changed.map(async (ticket) => {
+            const previousId = tk.latestMessageByTicket.get(ticket.id);
+            try {
+              const messageResponse = await apiFetch(`/api/tickets/${ticket.id}/messages?limit=100`);
+              const messageData = await messageResponse.json().catch(() => ({ ok: false }));
+              if (!messageData.ok) return;
+              tkNotifyNewMessages(ticket, messageData.messages, previousId);
+              tk.latestMessageByTicket.set(ticket.id, ticket.lastMessageId || ticket.id);
+            } catch (_) { /* ponowimy przy następnym sprawdzeniu */ }
+          }));
+          data.tickets.forEach((ticket) => {
+            if (!tk.latestMessageByTicket.has(ticket.id)) tk.latestMessageByTicket.set(ticket.id, ticket.lastMessageId || ticket.id);
+          });
+        } catch (_) { /* ponowimy przy następnym sprawdzeniu */ }
+        finally { tk.notificationBusy = false; }
       }
 
       tkEl('tkOlder').addEventListener('click', async () => {
@@ -1323,6 +1388,7 @@
           if (response.status === 401) { location.href = '/login'; return; }
           const data = await response.json().catch(() => ({ ok: false, error: 'Serwer odrzucił wiadomość (za duży załącznik?).' }));
           if (!data.ok) { tkEl('tkErr').textContent = data.error || 'Nie udało się wysłać.'; return; }
+          if (data.messageId) tk.ownSentMessageIds.add(data.messageId);
           tkInput.value = '';
           tkInput.style.height = 'auto';
           tk.files = [];
@@ -1696,6 +1762,7 @@
       loadTickets();
       setInterval(() => { if (!document.hidden) loadTickets(); }, 12000);
       setInterval(tkPoll, 3000);
+      setInterval(tkPollNotifications, 10000);
       loadStaff();
       setInterval(loadStaff, 60000);
       reloadActivity();
