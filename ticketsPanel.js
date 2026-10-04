@@ -18,6 +18,10 @@ const snowTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hexColor = (n) => (n ? `#${Number(n).toString(16).padStart(6, '0')}` : null);
 const safeUrl = (u) => (typeof u === 'string' && /^https:\/\//i.test(u) && u.length < 2000 ? u : null);
+const isVerifiedApplicationBot = (user) => Boolean(user?.bot && (
+  String(user.id) === String(process.env.DISCORD_APPLICATION_ID || '') ||
+  (Number(user.public_flags || user.flags || 0) & 0x10000) !== 0
+));
 
 const caches = new Map();
 function memo(key, ttl, fn) {
@@ -166,7 +170,11 @@ async function shapeMessages(raw, guildId) {
       type: m.type,
       timestamp: m.timestamp,
       edited: m.edited_timestamp || null,
-      author: { id: m.author.id, name: nameOf(m.author.id, m.author.global_name || m.author.username), avatarUrl: people.get(m.author.id)?.avatarUrl || userAvatar(m.author), bot: Boolean(m.author.bot) },
+      author: {
+        id: m.author.id, name: nameOf(m.author.id, m.author.global_name || m.author.username),
+        avatarUrl: people.get(m.author.id)?.avatarUrl || userAvatar(m.author), bot: Boolean(m.author.bot),
+        verifiedApplication: isVerifiedApplicationBot(m.author)
+      },
       content: m.content || '',
       mentions: { users, roles: roleMentions, channels: chans },
       embeds: (m.embeds || []).map(shapeEmbed),
@@ -346,6 +354,7 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
         member: {
           id: userId, name: member?.nick || user.global_name || user.username, username: user.username,
           nick: member?.nick || null, avatarUrl,
+          bot: Boolean(user.bot), verifiedApplication: isVerifiedApplicationBot(user),
           color: profileRoles.find((role) => role.color)?.color || null,
           roles: profileRoles, joinedAt: member?.joined_at || null,
           createdAt: new Date(snowTime(userId)).toISOString()
