@@ -196,6 +196,25 @@ h3 { margin: 0; font-size: 1.5rem; font-weight: 700; }
 .detail-meta { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--edge); }
 .detail-meta strong { display: block; font: 500 0.95rem var(--body); word-break: break-all; }
 
+/* Urlopy i zawieszenia */
+.absence-panel { padding: 22px 24px; }
+.absence-header { align-items: flex-end; flex-wrap: wrap; }
+.absence-header > div { margin-right: auto; }
+.absence-header p { margin: 4px 0 0; }
+.absence-filter { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 0.8rem; }
+.absence-filter select { min-width: 220px; padding: 8px 12px; border: 1px solid var(--edge); border-radius: 10px; background: rgba(255, 255, 255, 0.08); color: var(--text); color-scheme: dark; font: 500 0.9rem var(--body); }
+.absence-filter option { background: #14213a; }
+.absence-summary { margin: 8px 0 12px; }
+.absence-table-wrap { overflow-x: auto; border: 1px solid var(--edge); border-radius: 12px; }
+.absence-table { width: 100%; min-width: 760px; border-collapse: collapse; text-align: left; }
+.absence-table th, .absence-table td { padding: 10px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); vertical-align: top; }
+.absence-table th { color: var(--muted); font-size: 0.77rem; font-weight: 600; white-space: nowrap; background: rgba(255, 255, 255, 0.04); }
+.absence-table td { font-size: 0.88rem; overflow-wrap: anywhere; }
+.absence-table tbody tr:last-child td { border-bottom: 0; }
+.absence-row.active td:nth-child(3) { color: var(--green); font-weight: 600; }
+.absence-row.upcoming td:nth-child(3) { color: var(--amber); font-weight: 600; }
+.absence-table .absence-empty { padding: 24px; text-align: center; }
+
 /* Logs */
 .log-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
 .log-list { display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow-y: auto; padding-right: 2px; }
