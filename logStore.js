@@ -138,14 +138,32 @@ function persist(row) {
   persistenceQueue = write.catch((e) => console.error('Błąd zapisu logu do bazy:', e.message));
 }
 
-export async function clearLogs() {
-  persistenceGeneration++;
-  memory.length = 0;
-  pending.length = 0;
-  nextMemId = 1;
+export async function clearLogs({ source = null, guildId = null } = {}) {
+  const selectedGuild = guildId ? String(guildId) : null;
+  const matches = (row) => (!source || row.source === source) && (!selectedGuild || row.guildId === selectedGuild);
+  const clearAll = !source && !selectedGuild;
+
+  if (clearAll) {
+    persistenceGeneration++;
+    memory.length = 0;
+    pending.length = 0;
+    nextMemId = 1;
+    if (!ready) return;
+    const deletion = persistenceQueue.then(() => pool.query('DELETE FROM dashboard_logs'));
+    persistenceQueue = deletion.catch((e) => console.error('Błąd czyszczenia logów w bazie:', e.message));
+    await deletion;
+    return;
+  }
+
+  for (let index = memory.length - 1; index >= 0; index--) if (matches(memory[index])) memory.splice(index, 1);
+  for (let index = pending.length - 1; index >= 0; index--) if (matches(pending[index])) pending.splice(index, 1);
   if (!ready) return;
 
-  const deletion = persistenceQueue.then(() => pool.query('DELETE FROM dashboard_logs'));
+  const conditions = [];
+  const params = [];
+  if (source) { params.push(source); conditions.push(`source = $${params.length}`); }
+  if (selectedGuild) { params.push(selectedGuild); conditions.push(`guild_id = $${params.length}`); }
+  const deletion = persistenceQueue.then(() => pool.query(`DELETE FROM dashboard_logs WHERE ${conditions.join(' AND ')}`, params));
   persistenceQueue = deletion.catch((e) => console.error('Błąd czyszczenia logów w bazie:', e.message));
   await deletion;
 }
