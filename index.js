@@ -5,7 +5,7 @@ import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'd
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
-import { DEFAULT_STAFF_ROLES, getStaff } from './staff.js';
+import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
 import { registerTicketRoutes } from './ticketsPanel.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
@@ -1080,11 +1080,51 @@ app.get('/api/absences', requireDashboardAuth, async (req, res) => {
       Promise.all(Object.keys(serverConfigs).map(async (id) => ({ id, name: (await getGuildInfo(id, true))?.name || id })))
     ]);
     const names = new Map(guilds.map((guild) => [guild.id, guild.name]));
+    const guildRoles = new Map();
+    const enrichedAbsences = await Promise.all(absences.map(async (absence) => {
+      const [memberResult, roles] = await Promise.all([
+        fetch(`https://discord.com/api/v10/guilds/${absence.guildId}/members/${absence.userId}`, {
+          headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+        }).then(async (response) => response.ok ? response.json() : null).catch(() => null),
+        (async () => {
+          if (!guildRoles.has(absence.guildId)) {
+            guildRoles.set(absence.guildId, fetch(`https://discord.com/api/v10/guilds/${absence.guildId}/roles`, {
+              headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+            }).then(async (response) => response.ok ? response.json() : []).catch(() => []));
+          }
+          return guildRoles.get(absence.guildId);
+        })()
+      ]);
+      const user = memberResult?.user;
+      if (!user) return { ...absence, guildName: names.get(absence.guildId) || absence.guildId, member: null };
+
+      const roleMap = new Map(roles.map((role) => [role.id, role]));
+      const memberRoleIds = memberResult.roles || [];
+      const staffIds = new Set(Object.values(staffRoleIds(serverConfigs[absence.guildId], absence.guildId)).flat());
+      const profileRoles = memberRoleIds.map((id) => roleMap.get(id)).filter(Boolean).sort((a, b) => b.position - a.position)
+        .map((role) => ({ id: role.id, name: role.name, color: role.color ? `#${role.color.toString(16).padStart(6, '0')}` : null, staff: staffIds.has(role.id) }));
+      const groups = staffRoleIds(serverConfigs[absence.guildId], absence.guildId);
+      const group = STAFF_GROUPS.find((candidate) => groups[candidate.key]?.some((id) => memberRoleIds.includes(id)))
+        || { key: 'member', label: 'Użytkownik' };
+      const avatarUrl = memberResult.avatar
+        ? `https://cdn.discordapp.com/guilds/${absence.guildId}/users/${user.id}/avatars/${memberResult.avatar}.png?size=128`
+        : user.avatar
+          ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`
+          : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(user.id) >> 22n) % 6n)}.png`;
+      const member = {
+        id: user.id, name: memberResult.nick || user.global_name || user.username, username: user.username,
+        nick: memberResult.nick || null, avatarUrl, color: profileRoles.find((role) => role.color)?.color || null,
+        roles: profileRoles, joinedAt: memberResult.joined_at || null,
+        createdAt: new Date(Number((BigInt(user.id) >> 22n) + 1420070400000n)).toISOString(),
+        bot: Boolean(user.bot), verifiedApplication: Boolean(user.bot && (Number(user.public_flags || user.flags || 0) & 0x10000) !== 0)
+      };
+      return { ...absence, displayName: member.name, guildName: names.get(absence.guildId) || absence.guildId, member, group };
+    }));
     res.json({
       ok: true, today, guildId,
       guilds,
-      absences: absences.map((absence) => ({
-        ...absence, guildName: names.get(absence.guildId) || absence.guildId,
+      absences: enrichedAbsences.map((absence) => ({
+        ...absence,
         status: absence.startsOn > today ? 'upcoming' : 'active'
       }))
     });
