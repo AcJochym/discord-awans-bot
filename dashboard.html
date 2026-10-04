@@ -913,7 +913,10 @@
         s = s.replace(/```(?:[\w+-]*\n)?([\s\S]*?)```/g, (_, c) => { blocks.push(c.replace(/\n$/, '')); return `\u0000B${blocks.length - 1}\u0000`; });
         s = s.replace(/`([^`\n]+)`/g, (_, c) => { inlines.push(c); return `\u0000I${inlines.length - 1}\u0000`; });
         s = esc(s);
-        s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, (u) => hold(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`));
+        s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, (u) => {
+          if (/\.gif(?:[?#]|$)/i.test(u)) return hold(`<a class="tk-gif-link" href="${u}" target="_blank" rel="noopener noreferrer"><img class="tk-gif" src="${u}" alt="GIF" loading="lazy" /></a>`);
+          return hold(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+        });
         s = s.replace(/&lt;@!?(\d+)&gt;/g, (_, id) => hold(`<span class="mention">@${esc(mentions.users?.[id] || 'użytkownik')}</span>`));
         s = s.replace(/&lt;@&amp;(\d+)&gt;/g, (_, id) => { const r = mentions.roles?.[id]; return hold(`<span class="mention" ${r?.color ? `style="--mc:${esc(r.color)}"` : ''}>@${esc(r?.name || 'rola')}</span>`); });
         s = s.replace(/&lt;#(\d+)&gt;/g, (_, id) => hold(`<span class="mention">#${esc(mentions.channels?.[id] || 'kanał')}</span>`));
@@ -941,6 +944,7 @@
 
       function renderEmbed(e, mentions) {
         const fields = e.fields.map((f) => `<div class="e-field${f.inline ? ' inline' : ''}"><div class="e-fname">${renderMd(f.name, mentions)}</div><div class="e-fval">${renderMd(f.value, mentions)}</div></div>`).join('');
+        if (e.type === 'gifv' && e.video) return `<video class="tk-gif" src="${esc(e.video)}" autoplay loop muted playsinline preload="metadata"></video>`;
         const title = e.title ? `<div class="e-title">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>` : esc(e.title)}</div>` : '';
         return `<div class="tk-embed" style="--ec:${esc(e.color || '#4f6a8f')}">
           <div class="e-main">
@@ -959,7 +963,7 @@
 
       function renderAttachment(a) {
         if (!a.url) return '';
-        if (/^image\//.test(a.type)) return `<a class="tk-img" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" /></a>`;
+        if (/^image\//i.test(a.type) || /\.gif(?:[?#]|$)/i.test(a.name || a.url)) return `<a class="tk-img" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"><img class="tk-gif" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" /></a>`;
         if (/^video\//.test(a.type)) return `<video class="tk-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
         return `<a class="tk-file" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">📎 ${esc(a.name)} <span class="muted">${fmtSize(a.size)}</span></a>`;
       }
@@ -977,11 +981,13 @@
           return el;
         }
         const ref = m.reference ? `<div class="tk-ref">↪ <strong>${esc(m.reference.author)}</strong> ${esc(m.reference.snippet)}</div>` : '';
+        const messageContent = m.embeds.filter((embed) => embed.type === 'gifv' && embed.url)
+          .reduce((content, embed) => content.replace(embed.url, ''), m.content).trim();
         const head = compact ? '' : `<div class="tk-mhead"><button type="button" class="tk-author tk-author-profile" data-user-id="${esc(m.author.id)}">${esc(m.author.name)}</button>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}${m.author.verifiedApplication ? '<span class="verified-app-tag" title="Zweryfikowana aplikacja" aria-label="Zweryfikowana aplikacja">✓</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
         const react = m.reactions.length ? `<div class="tk-reacts">${m.reactions.map((r) => `<span>${r.id ? `<img class="emoji" src="https://cdn.discordapp.com/emojis/${esc(r.id)}.${r.animated ? 'gif' : 'png'}?size=32" alt="" />` : esc(r.name)} ${r.count}</span>`).join('')}</div>` : '';
         el.innerHTML = `${compact ? `<time class="tk-ctime" title="${esc(tkTime(m.timestamp))}">${esc(new Date(m.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }))}</time>` : `<img class="tk-av" src="${esc(m.author.avatarUrl)}" alt="" loading="lazy" />`}
           <div class="tk-mbody">${ref}${head}
-            ${m.content ? `<div class="tk-text">${renderMd(m.content, m.mentions)}${m.edited ? ' <span class="muted tk-edited">(edytowano)</span>' : ''}</div>` : ''}
+            ${messageContent ? `<div class="tk-text">${renderMd(messageContent, m.mentions)}${m.edited ? ' <span class="muted tk-edited">(edytowano)</span>' : ''}</div>` : ''}
             ${m.embeds.map((e) => renderEmbed(e, m.mentions)).join('')}
             ${m.attachments.length ? `<div class="tk-atts">${m.attachments.map(renderAttachment).join('')}</div>` : ''}
             ${react}
