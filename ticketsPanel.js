@@ -2,6 +2,7 @@
 // Dostęp odwzorowuje Discorda — widzisz tylko kanały, które widziałbyś na serwerze (uprawnienia ról i nadpisania kanału).
 import fetch from 'node-fetch';
 import { getArchivedTicket, listArchivedTickets } from './logStore.js';
+import { STAFF_GROUPS, staffRoleIds } from './staff.js';
 
 const API = 'https://discord.com/api/v10';
 const VIEW = 1n << 10n;
@@ -300,6 +301,59 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       });
     } catch (error) {
       fail(res, error, 'Nie udało się wczytać ticketu z archiwum.');
+    }
+  });
+
+  app.get('/api/tickets/:channelId/profile/:userId', requireDashboardAuth, async (req, res) => {
+    const channelId = String(req.params.channelId || '');
+    const userId = String(req.params.userId || '');
+    const requestedGuild = String(req.query.guild || '');
+    if (!isId(channelId) || !isId(userId)) return res.status(400).json({ ok: false, error: 'Niepoprawne ID.' });
+
+    let guildId;
+    let overwrites;
+    if (req.query.archived === 'true') {
+      guildId = pickGuild(requestedGuild);
+      const archive = await getArchivedTicket(channelId, guildId);
+      if (!archive) return res.status(404).json({ ok: false, error: 'Nie znaleziono ticketu w archiwum.' });
+      overwrites = archive.ticket.permission_overwrites || [];
+      const check = await accessChecker(req.dashUser, guildId);
+      if (!check({ guild_id: guildId, permission_overwrites: overwrites }).view) {
+        return res.status(403).json({ ok: false, error: 'Nie masz dostępu do tego ticketu.' });
+      }
+    } else {
+      const ctx = await context(req, res);
+      if (!ctx) return;
+      guildId = ctx.guildId;
+    }
+
+    try {
+      const [member, roles] = await Promise.all([getMember(guildId, userId), getRoles(guildId)]);
+      const user = member?.user || await api('GET', `/users/${userId}`).catch(() => null);
+      if (!user) return res.status(404).json({ ok: false, error: 'Nie znaleziono profilu użytkownika.' });
+      const roleMap = new Map(roles.map((role) => [role.id, role]));
+      const memberRoleIds = member?.roles || [];
+      const staffIds = new Set(Object.values(staffRoleIds(serverConfigs[guildId], guildId)).flat());
+      const profileRoles = memberRoleIds.map((id) => roleMap.get(id)).filter(Boolean).sort((a, b) => b.position - a.position)
+        .map((role) => ({ id: role.id, name: role.name, color: hexColor(role.color), staff: staffIds.has(role.id) }));
+      const group = STAFF_GROUPS.find((candidate) => staffRoleIds(serverConfigs[guildId], guildId)[candidate.key]?.some((id) => memberRoleIds.includes(id)))
+        || { key: 'member', label: 'Użytkownik' };
+      const avatarUrl = member?.avatar
+        ? `https://cdn.discordapp.com/guilds/${guildId}/users/${userId}/avatars/${member.avatar}.png?size=128`
+        : userAvatar(user);
+      res.json({
+        ok: true,
+        member: {
+          id: userId, name: member?.nick || user.global_name || user.username, username: user.username,
+          nick: member?.nick || null, avatarUrl,
+          color: profileRoles.find((role) => role.color)?.color || null,
+          roles: profileRoles, joinedAt: member?.joined_at || null,
+          createdAt: new Date(snowTime(userId)).toISOString()
+        },
+        group
+      });
+    } catch (error) {
+      fail(res, error, 'Nie udało się wczytać profilu użytkownika.');
     }
   });
 
