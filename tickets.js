@@ -7,6 +7,7 @@
 
 import fetch from 'node-fetch';
 import { saveArchivedTicket } from './logStore.js';
+import { staffRoleIds, ticketAccessRoleIds } from './staff.js';
 
 const API = 'https://discord.com/api/v10';
 
@@ -223,10 +224,9 @@ const isAdmin = (i, g) => (g.REQUIRED_ROLE_IDS || []).some(r => memberRoles(i).i
 // Obsługa ticketu = administracja LUB rola, która ma dostęp do tego kanału (nadana przy tworzeniu).
 // Dzięki temu każda kategoria może mieć własny zespół supportu.
 function isTicketStaff(interaction, guildConfig, ticket) {
-  if (isAdmin(interaction, guildConfig)) return true;
   const roles = memberRoles(interaction);
-  return (ticket.channel.permission_overwrites || []).some(o =>
-    o.type === 0 && o.id !== interaction.guild_id && roles.includes(o.id) && (BigInt(o.allow) & BigInt(PERM.VIEW)) !== 0n);
+  const allowedRoles = ticketAccessRoleIds(guildConfig, { ...ticket, guildId: interaction.guild_id });
+  return roles.some((id) => allowedRoles.includes(id));
 }
 
 // Czy użytkownik może otworzyć ticket tej kategorii? Zwraca komunikat błędu albo null.
@@ -524,6 +524,7 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
 
   const number = await nextTicketNumber(t, channels);
   const support = type.SUPPORT_ROLE_IDS || [];
+  const accessRoles = ticketAccessRoleIds(guildConfig, { typeId: type.ID, panelMode, guildId });
 
   // Domyślna nazwa: ID kategorii + numer odznaki z formularza (np. "raport_ftd-123").
   // Gdy formularz nie ma pola "odznaka" (np. domyślne pola Command bez własnych FIELDS),
@@ -537,7 +538,7 @@ async function createTicketLocked(interaction, guildConfig, t, type, mode, answe
     { id: guildId, type: 0, allow: '0', deny: String(PERM.VIEW) },
     { id: user.id, type: 1, allow: String(MEMBER_ALLOW), deny: '0' },
     { id: interaction.application_id, type: 1, allow: String(MEMBER_ALLOW), deny: '0' },
-    ...support.map(id => ({ id, type: 0, allow: String(MEMBER_ALLOW), deny: '0' }))
+    ...accessRoles.map(id => ({ id, type: 0, allow: String(MEMBER_ALLOW), deny: '0' }))
   ];
 
   const created = await discordRaw('POST', `/guilds/${guildId}/channels`, {
@@ -740,6 +741,42 @@ function claimedByIn(message) {
 export async function getTicketPanelClaim(channelId) {
   const message = await findTicketControlMessage(channelId);
   return { claimedBy: claimedByIn(message) };
+}
+
+export async function reconcileTicketAccess(serverConfigs) {
+  let updated = 0;
+  for (const [guildId, guildConfig] of Object.entries(serverConfigs)) {
+    if (!guildConfig?.TICKETS) continue;
+    const channels = await discord('GET', `/guilds/${guildId}/channels`);
+    if (!Array.isArray(channels)) continue;
+    const knownStaffRoles = Object.values(staffRoleIds(guildConfig, guildId)).flat();
+    for (const channel of channels) {
+      const ticket = parseTicketChannel(channel);
+      if (!ticket) continue;
+      const allowed = new Set(ticketAccessRoleIds(guildConfig, { ...ticket, guildId }));
+      const overwrites = [...(channel.permission_overwrites || [])];
+      const roleIds = new Set([
+        ...knownStaffRoles,
+        ...overwrites.filter((overwrite) => overwrite.type === 0).map((overwrite) => overwrite.id)
+      ]);
+      let changed = false;
+      for (const roleId of roleIds) {
+        const index = overwrites.findIndex((overwrite) => overwrite.type === 0 && overwrite.id === roleId);
+        const current = index >= 0 ? overwrites[index] : { id: roleId, type: 0, allow: '0', deny: '0' };
+        const currentAllow = BigInt(current.allow || 0);
+        const currentDeny = BigInt(current.deny || 0);
+        const nextAllow = allowed.has(roleId) ? currentAllow | BigInt(MEMBER_ALLOW) : currentAllow & ~BigInt(PERM.VIEW);
+        const nextDeny = allowed.has(roleId) ? currentDeny & ~BigInt(PERM.VIEW) : currentDeny | BigInt(PERM.VIEW);
+        if (nextAllow === currentAllow && nextDeny === currentDeny) continue;
+        const next = { ...current, id: roleId, type: 0, allow: String(nextAllow), deny: String(nextDeny) };
+        if (index >= 0) overwrites[index] = next;
+        else overwrites.push(next);
+        changed = true;
+      }
+      if (changed && await discord('PATCH', `/channels/${channel.id}`, { permission_overwrites: overwrites })) updated += 1;
+    }
+  }
+  console.log(`[tickets] Ujednolicono uprawnienia ${updated} istniejących kanałów.`);
 }
 
 export async function performPanelTicketAction({ action, guildConfig, guildId, channelId, actorId, appId, isAdmin = false, reason = '' }) {
