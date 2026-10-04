@@ -13,6 +13,7 @@ const ALL = (1n << 53n) - 1n;
 const MAX_FILES = 3;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const BLOCKED_EXT = /\.(exe|bat|cmd|com|scr|msi|vbs|ps1|jar|js|lnk|dll)$/i;
+const ticketEventClients = new Set();
 
 const isId = (v) => /^\d{5,25}$/.test(String(v));
 const snowTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
@@ -72,6 +73,53 @@ const getMember = (g, u) => memo(`m:${g}:${u}`, 30000, () => api('GET', `/guilds
 
 const defaultAvatar = (id) => `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(id) >> 22n) % 6n)}.png`;
 const userAvatar = (u) => (u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : defaultAvatar(u.id));
+
+export async function broadcastTicketGatewayMessage(message) {
+  const channel = message.channel;
+  const guildId = String(message.guildId || '');
+  if (!guildId || !channel?.topic?.startsWith('ticket|') || !ticketEventClients.size) return;
+
+  const permissionOverwrites = [...(channel.permissionOverwrites?.cache?.values() || [])].map((overwrite) => ({
+    id: overwrite.id,
+    type: overwrite.type === 1 || overwrite.type === 'member' ? 1 : 0,
+    allow: String(overwrite.allow?.bitfield ?? overwrite.allow ?? 0),
+    deny: String(overwrite.deny?.bitfield ?? overwrite.deny ?? 0)
+  }));
+  const accessChannel = { guild_id: guildId, permission_overwrites: permissionOverwrites };
+  const embed = message.embeds?.[0];
+  const panelReply = embed?.footer?.text?.startsWith('Odpowiedź z panelu');
+  const panelSenderId = panelReply ? /\b(\d{5,25})$/.exec(embed.footer.text)?.[1] || null : null;
+  const authorId = message.author?.id;
+  const authorAvatar = message.member?.avatar
+    ? `https://cdn.discordapp.com/guilds/${guildId}/users/${authorId}/avatars/${message.member.avatar}.png?size=64`
+    : message.author?.avatar
+      ? `https://cdn.discordapp.com/avatars/${authorId}/${message.author.avatar}.png?size=64`
+      : defaultAvatar(authorId);
+  const event = {
+    guildId, channelId: channel.id, ticketName: channel.name, messageId: message.id,
+    createdAt: message.createdAt?.toISOString() || new Date().toISOString(),
+    author: {
+      id: authorId, name: panelReply ? embed.author?.name || 'Obsługa' : message.member?.displayName || message.author?.globalName || message.author?.username || 'Użytkownik',
+      avatarUrl: panelReply ? embed.author?.iconURL() || authorAvatar : authorAvatar,
+      bot: Boolean(message.author?.bot)
+    },
+    content: message.content || '', panelReply, panelSenderId,
+    attachmentCount: message.attachments?.size || 0
+  };
+  const encoded = `event: ticket-message\ndata: ${JSON.stringify(event)}\n\n`;
+  await Promise.all([...ticketEventClients].map(async (client) => {
+    if (client.res.writableEnded || client.res.destroyed) {
+      ticketEventClients.delete(client);
+      return;
+    }
+    try {
+      const check = await client.accessChecker(guildId);
+      if (check(accessChannel).view) client.res.write(encoded);
+    } catch (error) {
+      console.error('[SSE tickety] Nie udało się sprawdzić uprawnień:', error.message);
+    }
+  }));
+}
 
 // Nazwa wyświetlana (pseudonim na serwerze > nazwa globalna > login); null gdy nie znaleziono
 const getPerson = (g, uid) => memo(`u:${g}:${uid}`, 10 * 60 * 1000, async () => {
@@ -196,6 +244,25 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
   const lastSend = new Map();
 
   const pickGuild = (requested) => (serverConfigs[requested] ? requested : serverConfigs[DEFAULT_GUILD] ? DEFAULT_GUILD : Object.keys(serverConfigs)[0]);
+
+  app.get('/api/tickets/events', requireDashboardAuth, (req, res) => {
+    res.status(200);
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    const client = { res, accessChecker };
+    ticketEventClients.add(client);
+    res.write(': connected\n\n');
+    const heartbeat = setInterval(() => {
+      if (res.writableEnded || res.destroyed) return clearInterval(heartbeat);
+      res.write(': keep-alive\n\n');
+    }, 25000);
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      ticketEventClients.delete(client);
+    };
+    req.on('close', cleanup);
+    res.on('close', cleanup);
+  });
 
   // Zwraca funkcję sprawdzającą uprawnienia użytkownika do danego kanału
   async function accessChecker(user, guildId) {
@@ -424,7 +491,7 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       const messages = await shapeMessages(raw, ctx.guildId);
       messages.forEach((message, index) => {
         message.mine = message.author.id === req.dashUser.id;
-        message.panelReply = (raw[index].embeds || []).some((embed) => embed.footer?.text === 'Odpowiedź z panelu');
+        message.panelReply = (raw[index].embeds || []).some((embed) => embed.footer?.text?.startsWith('Odpowiedź z panelu'));
       });
       const hidden = raw.filter((m) => !m.author.bot && !m.content && !m.embeds?.length && !m.attachments?.length && !m.sticker_items?.length && m.type === 0).length;
       res.json({ ok: true, ticket: await ticketInfo(ctx), canSend: ctx.access.send, messages, hasOlder: raw.length === limit, contentHidden: hidden > 0 });
@@ -497,7 +564,7 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
     const useNativeGifPreview = containsGifLink || containsGifFile;
     const payload = {
       ...((ping || useNativeGifPreview) ? { content: [ping ? `<@${ctx.topic.ownerId}>` : '', useNativeGifPreview ? text : ''].filter(Boolean).join('\n') } : {}),
-      embeds: useNativeGifPreview ? [] : [{ author: { name: String(name).slice(0, 256), icon_url: avatar ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64` : defaultAvatar(id) }, description: text || undefined, color: 0x3b82f6, footer: { text: 'Odpowiedź z panelu' } }],
+      embeds: useNativeGifPreview ? [] : [{ author: { name: String(name).slice(0, 256), icon_url: avatar ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64` : defaultAvatar(id) }, description: text || undefined, color: 0x3b82f6, footer: { text: `Odpowiedź z panelu • ${id}` } }],
       allowed_mentions: ping ? { users: [ctx.topic.ownerId] } : { parse: [] }
     };
     try {
