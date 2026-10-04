@@ -429,6 +429,7 @@
       let lastDetailId = null;
       let selectedGuildId = null;
       const guildNameMap = new Map();
+      let dashboardUserId = '';
 
       const glider = document.querySelector('.tab-glider');
       function moveGlider() {
@@ -562,6 +563,7 @@
         try {
           const data = await (await apiFetch('/api/me')).json();
           if (!data.ok) return;
+          dashboardUserId = data.id;
           document.getElementById('configTabButton').hidden = !data.isBotOwner;
           document.getElementById('clearLogsBtn').hidden = !data.isBotOwner;
           document.getElementById('userAvatar').src = data.avatarUrl;
@@ -939,7 +941,7 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
 
       /* --- Tickety w panelu: lista, rozmowa jak na Discordzie, odpowiadanie --- */
-      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, ownSentMessageIds: new Set(), notifiedMessageIds: new Set(), latestMessageByTicket: new Map(), notificationBaselineReady: false, notificationBusy: false, atBottom: true };
+      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, ownSentMessageIds: new Set(), notifiedMessageIds: new Set(), messageRefreshTimer: null, listRefreshTimer: null, atBottom: true };
       const tkEl = (id) => document.getElementById(id);
       const tkList = tkEl('tkList');
       const tkMsgs = tkEl('tkMsgs');
@@ -1134,7 +1136,7 @@
         });
         if (!incoming.length) return;
         const latest = incoming[incoming.length - 1];
-        const panelReply = latest.embeds.find((embed) => embed.footer === 'Odpowiedź z panelu');
+        const panelReply = latest.embeds.find((embed) => embed.footer?.startsWith('Odpowiedź z panelu'));
         const senderName = panelReply?.author?.name || latest.author.name;
         const senderAvatar = panelReply?.author?.icon || latest.author.avatarUrl || ticket.ownerAvatar;
         const count = incoming.length;
@@ -1298,39 +1300,33 @@
         syncMessages();
       }
 
-      async function tkPollNotifications() {
-        if (tk.notificationBusy || document.hidden || !tk.guild) return;
-        tk.notificationBusy = true;
-        try {
-          const response = await apiFetch(`/api/tickets?guild=${encodeURIComponent(tk.guild)}`);
-          const data = await response.json().catch(() => ({ ok: false }));
-          if (!data.ok) return;
-          if (!tk.notificationBaselineReady) {
-            data.tickets.forEach((ticket) => tk.latestMessageByTicket.set(ticket.id, ticket.lastMessageId || ticket.id));
-            tk.notificationBaselineReady = true;
-            return;
-          }
-          const changed = data.tickets.filter((ticket) => {
-            const latestId = ticket.lastMessageId || ticket.id;
-            const previousId = tk.latestMessageByTicket.get(ticket.id);
-            return previousId && idGt(latestId, previousId);
-          }).slice(0, 6);
-          await Promise.all(changed.map(async (ticket) => {
-            const previousId = tk.latestMessageByTicket.get(ticket.id);
-            try {
-              const messageResponse = await apiFetch(`/api/tickets/${ticket.id}/messages?limit=100`);
-              const messageData = await messageResponse.json().catch(() => ({ ok: false }));
-              if (!messageData.ok) return;
-              tkNotifyNewMessages(ticket, messageData.messages, previousId);
-              tk.latestMessageByTicket.set(ticket.id, ticket.lastMessageId || ticket.id);
-            } catch (_) { /* ponowimy przy następnym sprawdzeniu */ }
-          }));
-          data.tickets.forEach((ticket) => {
-            if (!tk.latestMessageByTicket.has(ticket.id)) tk.latestMessageByTicket.set(ticket.id, ticket.lastMessageId || ticket.id);
+      function handleTicketGatewayEvent(message) {
+        if (!message?.messageId || tk.notifiedMessageIds.has(message.messageId)) return;
+        tk.notifiedMessageIds.add(message.messageId);
+        if (tk.notifiedMessageIds.size > 3000) tk.notifiedMessageIds.delete(tk.notifiedMessageIds.values().next().value);
+
+        const ownMessage = message.author?.id === dashboardUserId || message.panelSenderId === dashboardUserId;
+        if (!ownMessage && (!message.author?.bot || message.panelReply)) {
+          const preview = String(message.content || '').trim().replace(/\s+/g, ' ');
+          const details = preview || (message.attachmentCount ? `Załączniki: ${message.attachmentCount}` : 'Nowa wiadomość');
+          showToast({
+            name: message.author?.name || 'Użytkownik', avatarUrl: message.author?.avatarUrl,
+            text: `#${message.ticketName}: ${details.slice(0, 120)}`
           });
-        } catch (_) { /* ponowimy przy następnym sprawdzeniu */ }
-        finally { tk.notificationBusy = false; }
+        }
+
+        if (tk.current?.id === message.channelId && !tk.current.archived) {
+          clearTimeout(tk.messageRefreshTimer);
+          tk.messageRefreshTimer = setTimeout(() => tkPoll(), 150);
+        }
+        clearTimeout(tk.listRefreshTimer);
+        tk.listRefreshTimer = setTimeout(() => loadTickets(), 350);
       }
+
+      const ticketEvents = new EventSource('/api/tickets/events');
+      ticketEvents.addEventListener('ticket-message', (event) => {
+        try { handleTicketGatewayEvent(JSON.parse(event.data)); } catch (_) { /* pomijamy nieczytelne zdarzenie */ }
+      });
 
       tkEl('tkOlder').addEventListener('click', async () => {
         if (!tk.msgs.length) return;
@@ -1972,9 +1968,6 @@
       setActiveTab('overview');
       loadMe();
       loadTickets();
-      setInterval(() => { if (!document.hidden) loadTickets(); }, 12000);
-      setInterval(tkPoll, 3000);
-      setInterval(tkPollNotifications, 10000);
       loadStaff();
       setInterval(loadStaff, 60000);
       reloadActivity();
