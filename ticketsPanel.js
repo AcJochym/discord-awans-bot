@@ -128,6 +128,7 @@ function embedTexts(m) {
 
 function shapeEmbed(e) {
   return {
+    type: e.type || null,
     color: hexColor(e.color),
     author: e.author ? { name: e.author.name, icon: safeUrl(e.author.icon_url) } : null,
     title: e.title || null,
@@ -136,6 +137,7 @@ function shapeEmbed(e) {
     fields: (e.fields || []).slice(0, 25).map((f) => ({ name: f.name, value: f.value, inline: Boolean(f.inline) })),
     thumbnail: safeUrl(e.thumbnail?.url),
     image: safeUrl(e.image?.url),
+    video: safeUrl(e.video?.url),
     footer: e.footer?.text || null,
     timestamp: e.timestamp || null
   };
