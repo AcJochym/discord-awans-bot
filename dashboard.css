@@ -547,6 +547,8 @@ body.modal-open { overflow: hidden; }
 .pf-badge { padding: 3px 12px; border-radius: 999px; font: 600 0.9rem var(--display); color: var(--c, var(--text)); background: rgba(255, 255, 255, 0.1); border: 1px solid var(--edge); }
 .pf-badge[hidden] { display: none; }
 .pf-badge.live { color: var(--green); background: rgba(110, 231, 183, 0.14); }
+.pf-badge.bot { color: #e4e7ff; background: rgba(88, 101, 242, 0.28); border-color: rgba(145, 154, 255, 0.55); }
+.pf-badge.verified { color: #dbe4ff; background: rgba(88, 101, 242, 0.14); border-color: rgba(145, 154, 255, 0.4); }
 .pf-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 0; }
 .pf-info > div { background: var(--glass-in); border: 1px solid var(--edge); border-radius: 14px; padding: 10px 14px; }
 .pf-info > div:last-child { grid-column: 1 / -1; }
@@ -625,6 +627,7 @@ body.modal-open { overflow: hidden; }
 .tk-author-profile:hover { color: #8ecbff; text-decoration: underline; text-underline-offset: 3px; }
 .tk-author-profile:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
 .bot-tag { padding: 0 5px; border-radius: 4px; background: #5865f2; color: #fff; font: 700 0.62rem var(--body); vertical-align: 2px; }
+.verified-app-tag { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: #5865f2; color: #fff; font: 700 0.66rem var(--body); line-height: 1; vertical-align: 1px; }
 .tk-mhead time, .tk-msg.system time { color: var(--muted); font-size: 0.72rem; }
 .tk-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 .tk-text blockquote { margin: 2px 0; padding: 0 0 0 10px; border-left: 4px solid rgba(255, 255, 255, 0.3); }
