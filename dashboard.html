@@ -55,6 +55,7 @@
         <button class="tab active" data-tab="overview">Status</button>
         <button class="tab" data-tab="servers">Serwery</button>
         <button class="tab" data-tab="logs">Logi</button>
+        <button class="tab" data-tab="tickets">Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
         <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
@@ -148,6 +149,60 @@
           <aside id="serverDetails" class="glass-card server-details">
             <div class="empty-state">Wybierz serwer, aby zobaczyć statystyki.</div>
           </aside>
+        </div>
+      </section>
+
+      <section id="ticketsTab" class="tab-panel">
+        <div id="tkLayout" class="tk-layout">
+          <div class="glass-card tk-list-card">
+            <div class="tk-list-head">
+              <select id="tkGuild" aria-label="Serwer" hidden></select>
+              <div class="chips" id="tkState" role="group" aria-label="Status ticketu">
+                <button type="button" data-v="open" aria-pressed="true">Otwarte</button>
+                <button type="button" data-v="closed" aria-pressed="false">Zamknięte</button>
+                <button type="button" data-v="all" aria-pressed="false">Wszystkie</button>
+              </div>
+              <input type="search" id="tkSearch" placeholder="Szukaj ticketu lub osoby…" maxlength="60" />
+            </div>
+            <div id="tkList" class="tk-list"><div class="empty">Ładowanie ticketów…</div></div>
+          </div>
+
+          <div class="glass-card tk-chat">
+            <div id="tkEmpty" class="tk-placeholder">Wybierz ticket z listy, aby zobaczyć rozmowę.</div>
+            <div id="tkPane" class="tk-pane" hidden>
+              <div class="tk-head">
+                <button type="button" id="tkBack" class="ghost-btn tk-back">← Lista</button>
+                <img id="tkOwnerAv" alt="" />
+                <div class="tk-head-text">
+                  <strong id="tkTitle"></strong>
+                  <span id="tkSub" class="muted"></span>
+                </div>
+                <span id="tkStatePill" class="tiny-pill"></span>
+                <a id="tkOpenDc" class="ghost-btn" target="_blank" rel="noopener noreferrer">Otwórz w Discordzie</a>
+              </div>
+              <div id="tkNotice" class="tk-notice" hidden></div>
+              <div id="tkScroll" class="tk-scroll">
+                <button type="button" id="tkOlder" class="ghost-btn tk-older" hidden>Wczytaj starsze wiadomości</button>
+                <div id="tkMsgs"></div>
+              </div>
+              <button type="button" id="tkJump" class="tk-jump" hidden>Nowe wiadomości ↓</button>
+              <div class="tk-composer">
+                <div id="tkFiles" class="tk-files"></div>
+                <div class="tk-compose-row">
+                  <label class="tk-attach" title="Dodaj załącznik (max 3 pliki po 8 MB)">
+                    <input type="file" id="tkFileInput" multiple hidden />＋
+                  </label>
+                  <textarea id="tkInput" rows="1" placeholder="Napisz odpowiedź… (Enter = wyślij, Shift+Enter = nowa linia)" maxlength="4000"></textarea>
+                  <button type="button" id="tkSend" class="primary-btn">Wyślij</button>
+                </div>
+                <div class="tk-compose-foot">
+                  <label class="tk-ping"><input type="checkbox" id="tkPing" /> Oznacz właściciela ticketu</label>
+                  <span id="tkCount" class="muted"></span>
+                  <span id="tkErr" class="tk-err" role="alert"></span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -826,6 +881,351 @@
       modal.addEventListener('click', (e) => { if (e.target === modal) closeProfile(); });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
 
+      /* --- Tickety w panelu: lista, rozmowa jak na Discordzie, odpowiadanie --- */
+      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, atBottom: true };
+      const tkEl = (id) => document.getElementById(id);
+      const tkList = tkEl('tkList');
+      const tkMsgs = tkEl('tkMsgs');
+      const tkScroll = tkEl('tkScroll');
+      let tkSeen = {};
+      try { tkSeen = JSON.parse(localStorage.getItem('tkSeen') || '{}'); } catch (_) { tkSeen = {}; }
+      const tkSaveSeen = () => { try { localStorage.setItem('tkSeen', JSON.stringify(tkSeen)); } catch (_) { /* pomijamy */ } };
+      const idGt = (a, b) => { try { return BigInt(a) > BigInt(b || 0); } catch (_) { return false; } };
+      const tkTime = (v) => new Date(v).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const tkAgo = (v) => {
+        const s = Math.max(0, (Date.now() - new Date(v)) / 1000);
+        if (s < 60) return 'przed chwilą';
+        if (s < 3600) return `${Math.floor(s / 60)} min temu`;
+        if (s < 86400) return `${Math.floor(s / 3600)} godz. temu`;
+        return `${Math.floor(s / 86400)} dni temu`;
+      };
+
+      /* Markdown Discorda -> bezpieczny HTML (najpierw escape, potem znaczniki) */
+      function renderMd(src, mentions = {}) {
+        if (!src) return '';
+        const ph = [];
+        const hold = (html) => { ph.push(html); return `\u0000P${ph.length - 1}\u0000`; };
+        const blocks = [];
+        const inlines = [];
+        let s = String(src);
+        s = s.replace(/```(?:[\w+-]*\n)?([\s\S]*?)```/g, (_, c) => { blocks.push(c.replace(/\n$/, '')); return `\u0000B${blocks.length - 1}\u0000`; });
+        s = s.replace(/`([^`\n]+)`/g, (_, c) => { inlines.push(c); return `\u0000I${inlines.length - 1}\u0000`; });
+        s = esc(s);
+        s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, (u) => hold(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`));
+        s = s.replace(/&lt;@!?(\d+)&gt;/g, (_, id) => hold(`<span class="mention">@${esc(mentions.users?.[id] || 'użytkownik')}</span>`));
+        s = s.replace(/&lt;@&amp;(\d+)&gt;/g, (_, id) => { const r = mentions.roles?.[id]; return hold(`<span class="mention" ${r?.color ? `style="--mc:${esc(r.color)}"` : ''}>@${esc(r?.name || 'rola')}</span>`); });
+        s = s.replace(/&lt;#(\d+)&gt;/g, (_, id) => hold(`<span class="mention">#${esc(mentions.channels?.[id] || 'kanał')}</span>`));
+        s = s.replace(/&lt;(a?):(\w+):(\d+)&gt;/g, (_, a, name, id) => hold(`<img class="emoji" alt=":${name}:" src="https://cdn.discordapp.com/emojis/${id}.${a ? 'gif' : 'png'}?size=48" loading="lazy" />`));
+        s = s.replace(/&lt;t:(\d+)(?::\w)?&gt;/g, (_, t) => hold(`<span class="mention">${esc(tkTime(Number(t) * 1000))}</span>`));
+        s = s.replace(/@(everyone|here)\b/g, (m) => hold(`<span class="mention">${m}</span>`));
+        s = s.replace(/\*\*\*(.+?)\*\*\*/gs, '<strong><em>$1</em></strong>')
+          .replace(/\*\*(.+?)\*\*/gs, '<strong>$1</strong>')
+          .replace(/__(.+?)__/gs, '<u>$1</u>')
+          .replace(/(^|[^\w*])\*(?!\s)(.+?)(?<!\s)\*(?!\*)/gs, '$1<em>$2</em>')
+          .replace(/(^|[^\w])_(?!\s)(.+?)(?<!\s)_(?!\w)/gs, '$1<em>$2</em>')
+          .replace(/~~(.+?)~~/gs, '<s>$1</s>')
+          .replace(/\|\|(.+?)\|\|/gs, '<span class="spoiler" tabindex="0">$1</span>');
+        const lines = s.split('\n').map((l) => {
+          if (/^&gt; ?/.test(l)) return { q: true, t: `<blockquote>${l.replace(/^&gt; ?/, '')}</blockquote>` };
+          const h = l.match(/^(#{1,3}) (.+)/);
+          return h ? { q: true, t: `<strong class="md-h md-h${h[1].length}">${h[2]}</strong>` } : { q: false, t: l };
+        });
+        s = lines.map((l, i) => l.t + (i < lines.length - 1 && !l.q && !lines[i + 1].q ? '\n' : '')).join('');
+        s = s.replace(/\u0000P(\d+)\u0000/g, (_, i) => ph[i]);
+        s = s.replace(/\u0000I(\d+)\u0000/g, (_, i) => `<code>${esc(inlines[i])}</code>`);
+        s = s.replace(/\u0000B(\d+)\u0000/g, (_, i) => `<pre><code>${esc(blocks[i])}</code></pre>`);
+        return s;
+      }
+
+      function renderEmbed(e, mentions) {
+        const fields = e.fields.map((f) => `<div class="e-field${f.inline ? ' inline' : ''}"><div class="e-fname">${renderMd(f.name, mentions)}</div><div class="e-fval">${renderMd(f.value, mentions)}</div></div>`).join('');
+        const title = e.title ? `<div class="e-title">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>` : esc(e.title)}</div>` : '';
+        return `<div class="tk-embed" style="--ec:${esc(e.color || '#4f6a8f')}">
+          <div class="e-main">
+            ${e.author ? `<div class="e-author">${e.author.icon ? `<img src="${esc(e.author.icon)}" alt="" />` : ''}<span>${esc(e.author.name || '')}</span></div>` : ''}
+            ${title}
+            ${e.description ? `<div class="e-desc">${renderMd(e.description, mentions)}</div>` : ''}
+            ${fields ? `<div class="e-fields">${fields}</div>` : ''}
+            ${e.image ? `<img class="e-image" src="${esc(e.image)}" alt="" loading="lazy" />` : ''}
+            ${e.footer || e.timestamp ? `<div class="e-footer">${esc(e.footer || '')}${e.footer && e.timestamp ? ' • ' : ''}${e.timestamp ? esc(tkTime(e.timestamp)) : ''}</div>` : ''}
+          </div>
+          ${e.thumbnail ? `<img class="e-thumb" src="${esc(e.thumbnail)}" alt="" loading="lazy" />` : ''}
+        </div>`;
+      }
+
+      const fmtSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+
+      function renderAttachment(a) {
+        if (!a.url) return '';
+        if (/^image\//.test(a.type)) return `<a class="tk-img" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" /></a>`;
+        if (/^video\//.test(a.type)) return `<video class="tk-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
+        return `<a class="tk-file" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">📎 ${esc(a.name)} <span class="muted">${fmtSize(a.size)}</span></a>`;
+      }
+
+      const msgSig = (m, compact) => `${m.edited || ''}|${compact}|${m.reactions.map((r) => r.count).join(',')}|${m.attachments.length}|${m.embeds.length}|${m.content.length}`;
+
+      function renderMessage(m, compact) {
+        const el = document.createElement('div');
+        el.dataset.id = m.id;
+        el.dataset.sig = msgSig(m, compact);
+        el.className = `tk-msg${compact ? ' compact' : ''}`;
+        if (m.type !== 0 && m.type !== 19) {
+          el.className = 'tk-msg system';
+          el.innerHTML = `<span>${esc(m.author.name)} — wiadomość systemowa</span><time>${esc(tkTime(m.timestamp))}</time>`;
+          return el;
+        }
+        const ref = m.reference ? `<div class="tk-ref">↪ <strong>${esc(m.reference.author)}</strong> ${esc(m.reference.snippet)}</div>` : '';
+        const head = compact ? '' : `<div class="tk-mhead"><strong class="tk-author">${esc(m.author.name)}</strong>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
+        const react = m.reactions.length ? `<div class="tk-reacts">${m.reactions.map((r) => `<span>${r.id ? `<img class="emoji" src="https://cdn.discordapp.com/emojis/${esc(r.id)}.${r.animated ? 'gif' : 'png'}?size=32" alt="" />` : esc(r.name)} ${r.count}</span>`).join('')}</div>` : '';
+        el.innerHTML = `${compact ? `<time class="tk-ctime" title="${esc(tkTime(m.timestamp))}">${esc(new Date(m.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }))}</time>` : `<img class="tk-av" src="${esc(m.author.avatarUrl)}" alt="" loading="lazy" />`}
+          <div class="tk-mbody">${ref}${head}
+            ${m.content ? `<div class="tk-text">${renderMd(m.content, m.mentions)}${m.edited ? ' <span class="muted tk-edited">(edytowano)</span>' : ''}</div>` : ''}
+            ${m.embeds.map((e) => renderEmbed(e, m.mentions)).join('')}
+            ${m.attachments.length ? `<div class="tk-atts">${m.attachments.map(renderAttachment).join('')}</div>` : ''}
+            ${react}
+          </div>`;
+        return el;
+      }
+
+      // Aktualizuje tylko zmienione wiadomości (bez migania i bez gubienia pozycji przewijania)
+      function syncMessages() {
+        const nearBottom = tkScroll.scrollHeight - tkScroll.scrollTop - tkScroll.clientHeight < 90;
+        const existing = new Map([...tkMsgs.children].map((c) => [c.dataset.id, c]));
+        let prev = null;
+        let appended = false;
+        tk.msgs.forEach((m, i) => {
+          const before = tk.msgs[i - 1];
+          const compact = Boolean(before && before.author.id === m.author.id && m.type === 0 && before.type === 0 && !m.reference
+            && new Date(m.timestamp) - new Date(before.timestamp) < 7 * 60 * 1000);
+          let node = existing.get(m.id);
+          existing.delete(m.id);
+          if (!node || node.dataset.sig !== msgSig(m, compact)) {
+            const fresh = renderMessage(m, compact);
+            if (node) node.replaceWith(fresh); else appended = true;
+            node = fresh;
+          }
+          const expected = prev ? prev.nextElementSibling : tkMsgs.firstElementChild;
+          if (node !== expected) tkMsgs.insertBefore(node, expected);
+          prev = node;
+        });
+        existing.forEach((n) => n.remove());
+        if (tk.fresh || nearBottom) { tkScroll.scrollTop = tkScroll.scrollHeight; tkEl('tkJump').hidden = true; }
+        else if (appended) tkEl('tkJump').hidden = false;
+        tk.fresh = false;
+        tkEl('tkOlder').hidden = !tk.hasOlder;
+        const last = tk.msgs[tk.msgs.length - 1];
+        if (last && tk.current) { tkSeen[tk.current.id] = last.id; tkSaveSeen(); renderTicketList(); }
+      }
+
+      async function tkFetchMessages(before) {
+        const id = tk.current?.id;
+        if (!id) return null;
+        const url = `/api/tickets/${id}/messages?limit=${before ? 100 : 60}${before ? `&before=${before}` : ''}`;
+        const response = await apiFetch(url);
+        const data = await response.json().catch(() => ({ ok: false }));
+        if (tk.current?.id !== id) return null;
+        if (!data.ok) { tkSetNotice(data.error || 'Nie udało się wczytać rozmowy.'); return null; }
+        return data;
+      }
+
+      function tkSetNotice(text) { const n = tkEl('tkNotice'); n.textContent = text || ''; n.hidden = !text; }
+
+      function tkApplyHeader(t, canSend) {
+        tkEl('tkOwnerAv').src = t.ownerAvatar;
+        tkEl('tkTitle').textContent = `#${t.name}`;
+        tkEl('tkSub').textContent = `${t.ownerName} • ${t.typeLabel}`;
+        const pill = tkEl('tkStatePill');
+        pill.textContent = t.state === 'closed' ? 'Zamknięty' : 'Otwarty';
+        pill.className = `tiny-pill ${t.state === 'closed' ? 'error' : 'online'}`;
+        tkEl('tkOpenDc').href = t.url;
+        tk.canSend = canSend;
+        tkEl('tkInput').disabled = !canSend;
+        tkEl('tkSend').disabled = !canSend || tk.sending;
+        tkEl('tkInput').placeholder = canSend ? 'Napisz odpowiedź… (Enter = wyślij, Shift+Enter = nowa linia)' : 'Tylko podgląd — nie masz uprawnień do pisania w tym tickecie.';
+      }
+
+      async function openTicket(id) {
+        tk.current = { id };
+        tk.msgs = [];
+        tk.fresh = true;
+        tk.files = [];
+        tkMsgs.replaceChildren();
+        tkRenderFiles();
+        tkEl('tkEmpty').hidden = true;
+        tkEl('tkPane').hidden = false;
+        tkEl('tkLayout').classList.add('tk-open');
+        tkSetNotice('');
+        const summary = tk.tickets.find((t) => t.id === id);
+        if (summary) { tkEl('tkTitle').textContent = `#${summary.name}`; tkEl('tkSub').textContent = `${summary.ownerName} • ${summary.typeLabel}`; tkEl('tkOwnerAv').src = summary.ownerAvatar; }
+        renderTicketList();
+        const data = await tkFetchMessages();
+        if (!data) return;
+        tk.current = data.ticket;
+        tk.msgs = data.messages;
+        tk.hasOlder = data.hasOlder;
+        tkApplyHeader(data.ticket, data.canSend);
+        if (data.contentHidden) tkSetNotice('Część wiadomości nie ma treści widocznej dla bota. Włącz „Message Content Intent" w Developer Portal (Bot → Privileged Gateway Intents).');
+        syncMessages();
+        tkEl('tkInput').focus();
+      }
+
+      async function tkPoll() {
+        if (!tk.current?.id || !tkEl('ticketsTab').classList.contains('active') || document.hidden || tk.sending) return;
+        const data = await tkFetchMessages();
+        if (!data) return;
+        tkApplyHeader(data.ticket, data.canSend);
+        tk.current = data.ticket;
+        const batch = data.messages;
+        if (!batch.length) return;
+        const first = batch[0].id;
+        const lastLocal = tk.msgs[tk.msgs.length - 1];
+        if (lastLocal && idGt(first, lastLocal.id) && batch.length >= 60) { tk.msgs = batch; tk.fresh = true; }
+        else tk.msgs = [...tk.msgs.filter((m) => !idGt(m.id, first) && m.id !== first), ...batch];
+        syncMessages();
+      }
+
+      tkEl('tkOlder').addEventListener('click', async () => {
+        if (!tk.msgs.length) return;
+        const keep = tkScroll.scrollHeight - tkScroll.scrollTop;
+        const data = await tkFetchMessages(tk.msgs[0].id);
+        if (!data) return;
+        tk.msgs = [...data.messages, ...tk.msgs];
+        tk.hasOlder = data.hasOlder;
+        syncMessages();
+        tkScroll.scrollTop = tkScroll.scrollHeight - keep;
+      });
+      tkEl('tkJump').addEventListener('click', () => { tkScroll.scrollTop = tkScroll.scrollHeight; tkEl('tkJump').hidden = true; });
+      tkScroll.addEventListener('scroll', () => { if (tkScroll.scrollHeight - tkScroll.scrollTop - tkScroll.clientHeight < 90) tkEl('tkJump').hidden = true; }, { passive: true });
+      tkEl('tkBack').addEventListener('click', () => { tkEl('tkLayout').classList.remove('tk-open'); });
+
+      /* Lista ticketów */
+      function renderTicketList() {
+        const q = tk.q.toLowerCase();
+        const rows = tk.tickets.filter((t) => (tk.state === 'all' || t.state === tk.state) && (!q || `${t.name} ${t.ownerName} ${t.typeLabel} ${t.number}`.toLowerCase().includes(q)));
+        const unread = (t) => t.state === 'open' && t.lastMessageId && idGt(t.lastMessageId, tkSeen[t.id]) && tk.current?.id !== t.id;
+        const sig = JSON.stringify([rows.map((t) => [t.id, t.lastMessageId, t.state, unread(t)]), tk.current?.id]);
+        const badge = tkEl('tkBadge');
+        const count = tk.tickets.filter(unread).length;
+        const prevBadge = badge.textContent;
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.hidden = !count;
+        if (prevBadge !== badge.textContent) moveGlider();
+        if (sig === tk.listSig) return;
+        tk.listSig = sig;
+        if (!rows.length) { tkList.innerHTML = '<div class="empty">Brak ticketów dla wybranych filtrów.</div>'; return; }
+        tkList.replaceChildren(...rows.map((t) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = `tk-item${tk.current?.id === t.id ? ' active' : ''}${unread(t) ? ' unread' : ''}`;
+          b.innerHTML = `<img src="${esc(t.ownerAvatar)}" alt="" loading="lazy" />
+            <span class="tk-item-text"><strong>${esc(t.ownerName)}</strong><span class="muted">#${esc(t.name)}</span><span class="muted">${esc(t.typeLabel)}</span></span>
+            <span class="tk-item-meta"><span class="tiny-pill ${t.state === 'closed' ? 'error' : 'online'}">${t.state === 'closed' ? 'Zamk.' : 'Otw.'}</span><span class="muted">${esc(tkAgo(t.lastMessageAt))}</span>${unread(t) ? '<i class="tk-dot"></i>' : ''}</span>`;
+          b.addEventListener('click', () => openTicket(t.id));
+          return b;
+        }));
+      }
+
+      async function loadTickets() {
+        try {
+          const data = await (await apiFetch(`/api/tickets${tk.guild ? `?guild=${encodeURIComponent(tk.guild)}` : ''}`)).json();
+          if (!data.ok) { tkList.innerHTML = `<div class="empty">${esc(data.error || 'Nie udało się pobrać ticketów.')}</div>`; return; }
+          tk.guild = data.guildId;
+          const sel = tkEl('tkGuild');
+          sel.hidden = data.guilds.length < 2;
+          if (sel.options.length !== data.guilds.length) sel.replaceChildren(...data.guilds.map((g) => new Option(g.name, g.id)));
+          sel.value = data.guildId;
+          tk.tickets = data.tickets;
+          renderTicketList();
+        } catch (_) { /* przekierowanie obsłuży apiFetch */ }
+      }
+
+      tkEl('tkGuild').addEventListener('change', (e) => { tk.guild = e.target.value; tk.listSig = ''; tk.current = null; tkEl('tkPane').hidden = true; tkEl('tkEmpty').hidden = false; tkEl('tkLayout').classList.remove('tk-open'); loadTickets(); });
+      tkEl('tkState').addEventListener('click', (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        tk.state = b.dataset.v;
+        tkEl('tkState').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        tk.listSig = '';
+        renderTicketList();
+      });
+      let tkSearchTimer;
+      tkEl('tkSearch').addEventListener('input', (e) => { clearTimeout(tkSearchTimer); tkSearchTimer = setTimeout(() => { tk.q = e.target.value.trim(); tk.listSig = ''; renderTicketList(); }, 200); });
+
+      /* Pisanie odpowiedzi */
+      const tkInput = tkEl('tkInput');
+      function tkRenderFiles() {
+        const box = tkEl('tkFiles');
+        box.replaceChildren(...tk.files.map((f, i) => {
+          const chip = document.createElement('span');
+          chip.className = 'tk-fchip';
+          chip.textContent = `📎 ${f.name} (${fmtSize(f.size)}) `;
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.textContent = '✕';
+          x.setAttribute('aria-label', 'Usuń załącznik');
+          x.addEventListener('click', () => { tk.files.splice(i, 1); tkRenderFiles(); });
+          chip.appendChild(x);
+          return chip;
+        }));
+      }
+      function tkAddFiles(list) {
+        tkEl('tkErr').textContent = '';
+        for (const f of list) {
+          if (tk.files.length >= 3) { tkEl('tkErr').textContent = 'Maksymalnie 3 załączniki.'; break; }
+          if (f.size > 8 * 1024 * 1024) { tkEl('tkErr').textContent = `Plik ${f.name} jest większy niż 8 MB.`; continue; }
+          tk.files.push(f);
+        }
+        tkRenderFiles();
+      }
+      tkEl('tkFileInput').addEventListener('change', (e) => { tkAddFiles([...e.target.files]); e.target.value = ''; });
+      tkInput.addEventListener('paste', (e) => { const files = [...(e.clipboardData?.files || [])]; if (files.length) { e.preventDefault(); tkAddFiles(files); } });
+      tkInput.addEventListener('input', () => {
+        tkInput.style.height = 'auto';
+        tkInput.style.height = `${Math.min(tkInput.scrollHeight, 180)}px`;
+        tkEl('tkCount').textContent = tkInput.value.length > 3500 ? `${tkInput.value.length}/4000` : '';
+      });
+      tkInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); tkSend(); } });
+      tkEl('tkSend').addEventListener('click', tkSend);
+
+      const toBase64 = (file) => new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1] || '');
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+
+      async function tkSend() {
+        const text = tkInput.value.trim();
+        if (tk.sending || !tk.canSend || (!text && !tk.files.length)) return;
+        tk.sending = true;
+        tkEl('tkSend').disabled = true;
+        tkEl('tkSend').textContent = 'Wysyłanie…';
+        tkEl('tkErr').textContent = '';
+        try {
+          const files = await Promise.all(tk.files.map(async (f) => ({ name: f.name, type: f.type, data: await toBase64(f) })));
+          const response = await fetch(`/api/tickets/${tk.current.id}/messages`, {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: text, files, pingOwner: tkEl('tkPing').checked })
+          });
+          if (response.status === 401) { location.href = '/login'; return; }
+          const data = await response.json().catch(() => ({ ok: false, error: 'Serwer odrzucił wiadomość (za duży załącznik?).' }));
+          if (!data.ok) { tkEl('tkErr').textContent = data.error || 'Nie udało się wysłać.'; return; }
+          tkInput.value = '';
+          tkInput.style.height = 'auto';
+          tk.files = [];
+          tkRenderFiles();
+          tk.fresh = true;
+          tk.sending = false;
+          await tkPoll();
+        } catch (_) {
+          tkEl('tkErr').textContent = 'Nie udało się wysłać. Spróbuj ponownie.';
+        } finally {
+          tk.sending = false;
+          tkEl('tkSend').textContent = 'Wyślij';
+          tkEl('tkSend').disabled = !tk.canSend;
+          tkInput.focus();
+        }
+      }
+
       async function loadSummary() {
         const response = await apiFetch('/api/dashboard-summary');
         const data = await response.json();
@@ -1179,6 +1579,9 @@
 
       setActiveTab('overview');
       loadMe();
+      loadTickets();
+      setInterval(() => { if (!document.hidden) loadTickets(); }, 12000);
+      setInterval(tkPoll, 3000);
       loadStaff();
       setInterval(loadStaff, 60000);
       reloadActivity();
