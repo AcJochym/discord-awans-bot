@@ -1436,9 +1436,34 @@
           }
           data.absences.forEach((absence) => {
             const row = document.createElement('tr');
+            const person = document.createElement('td');
+            person.className = 'absence-person-cell';
+            const personContent = document.createElement(absence.member ? 'button' : 'span');
+            personContent.className = `absence-person${absence.member ? ' absence-person-button' : ''}`;
+            if (absence.member) {
+              personContent.type = 'button';
+              personContent.setAttribute('aria-label', `Otwórz profil ${absence.member.name}`);
+              personContent.addEventListener('click', () => openProfile(absence.member, absence.group || { key: 'member', label: 'Użytkownik' }));
+            }
+            if (absence.member?.avatarUrl) {
+              const avatar = document.createElement('img');
+              avatar.src = absence.member.avatarUrl;
+              avatar.alt = '';
+              avatar.loading = 'lazy';
+              personContent.appendChild(avatar);
+            }
+            const name = document.createElement('span');
+            name.textContent = absence.member?.nick || absence.member?.name || absence.displayName;
+            personContent.appendChild(name);
+            person.appendChild(personContent);
+            row.appendChild(person);
+
+            const kind = document.createElement('td');
+            kind.className = `absence-kind ${absence.kind}`;
+            kind.textContent = absence.kind === 'vacation' ? 'Urlop' : 'Zawieszenie';
+            row.appendChild(kind);
+
             const values = [
-              absence.displayName,
-              absence.kind === 'vacation' ? 'Urlop' : 'Zawieszenie',
               absence.status === 'upcoming' ? 'Nadchodzący' : 'Trwa',
               absenceDateLabel(absence.startsOn),
               absenceDateLabel(absence.returnsOn),
