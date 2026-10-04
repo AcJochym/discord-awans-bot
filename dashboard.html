@@ -840,6 +840,7 @@
         document.getElementById('pfName').textContent = member.name;
         document.getElementById('pfUser').textContent = `@${member.username}`;
         document.getElementById('pfBadges').innerHTML =
+          (member.bot ? `<span class="pf-badge bot">BOT</span>${member.verifiedApplication ? '<span class="pf-badge verified" title="Zweryfikowana aplikacja">✓ Zweryfikowana aplikacja</span>' : ''}` : '') +
           `<span class="pf-badge" style="--c:${accent}">${esc(group.label)}</span>` +
           `<span id="pfPanel" class="pf-badge live" ${onlineIds.has(member.id) ? '' : 'hidden'}>Teraz w panelu</span>`;
         const days = daysSince(member.joinedAt);
@@ -976,7 +977,7 @@
           return el;
         }
         const ref = m.reference ? `<div class="tk-ref">↪ <strong>${esc(m.reference.author)}</strong> ${esc(m.reference.snippet)}</div>` : '';
-        const head = compact ? '' : `<div class="tk-mhead"><button type="button" class="tk-author tk-author-profile" data-user-id="${esc(m.author.id)}">${esc(m.author.name)}</button>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
+        const head = compact ? '' : `<div class="tk-mhead"><button type="button" class="tk-author tk-author-profile" data-user-id="${esc(m.author.id)}">${esc(m.author.name)}</button>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}${m.author.verifiedApplication ? '<span class="verified-app-tag" title="Zweryfikowana aplikacja" aria-label="Zweryfikowana aplikacja">✓</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
         const react = m.reactions.length ? `<div class="tk-reacts">${m.reactions.map((r) => `<span>${r.id ? `<img class="emoji" src="https://cdn.discordapp.com/emojis/${esc(r.id)}.${r.animated ? 'gif' : 'png'}?size=32" alt="" />` : esc(r.name)} ${r.count}</span>`).join('')}</div>` : '';
         el.innerHTML = `${compact ? `<time class="tk-ctime" title="${esc(tkTime(m.timestamp))}">${esc(new Date(m.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }))}</time>` : `<img class="tk-av" src="${esc(m.author.avatarUrl)}" alt="" loading="lazy" />`}
           <div class="tk-mbody">${ref}${head}
