@@ -6,7 +6,7 @@ import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
-import { registerTicketRoutes } from './ticketsPanel.js';
+import { broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
 const app = express();
@@ -266,6 +266,9 @@ discordClient.once('ready', () => {
 });
 
 discordClient.on('messageCreate', async message => {
+  if (message.guildId && message.channel?.topic?.startsWith('ticket|')) {
+    broadcastTicketGatewayMessage(message).catch((error) => console.error('Błąd SSE ticketu:', error.message));
+  }
   if (message.author.bot) return;
 
   const isDirectMessage = message.guildId === null;
