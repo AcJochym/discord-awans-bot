@@ -910,9 +910,22 @@ app.get('/api/logs', requireDashboardAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/logs', requireDashboardAuth, requireBotOwner, async (_req, res) => {
+app.delete('/api/logs', requireDashboardAuth, requireBotOwner, express.json({ limit: '2kb' }), async (req, res) => {
   try {
-    await clearLogs();
+    const category = String(req.body?.category || 'all');
+    if (category === 'all') {
+      await clearLogs();
+    } else if (category === 'system') {
+      await clearLogs({ source: 'bot' });
+    } else if (category === 'server') {
+      const guildId = String(req.body?.guildId || '');
+      if (!/^\d{5,25}$/.test(guildId) || !serverConfigs[guildId]) {
+        return res.status(400).json({ ok: false, error: 'Wybierz poprawny serwer.' });
+      }
+      await clearLogs({ source: 'server', guildId });
+    } else {
+      return res.status(400).json({ ok: false, error: 'Nieznana kategoria logów.' });
+    }
     res.json({ ok: true });
   } catch (error) {
     console.error('Nie udało się wyczyścić logów:', error.message);
