@@ -5,6 +5,7 @@ const MEMORY_LIMIT = 3000;
 const RETENTION_DAYS = Math.max(1, Number.parseInt(process.env.LOG_RETENTION_DAYS, 10) || 90);
 const memory = [];   // najnowsze na początku
 const pending = [];  // logi dodane zanim baza była gotowa
+const archivedTickets = new Map();
 let pool = null;
 let ready = false;
 let initDone = false;
@@ -51,6 +52,14 @@ export async function initLogStore() {
         settings JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS archived_tickets (
+        channel_id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        deleted_at TIMESTAMPTZ NOT NULL,
+        ticket JSONB NOT NULL,
+        messages JSONB NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_archived_tickets_guild_deleted ON archived_tickets (guild_id, deleted_at DESC);
     `);
     ready = true;
     for (const row of pending.splice(0)) persist(row);
@@ -79,6 +88,37 @@ export async function writeServerConfig(guildId, settings) {
     ON CONFLICT (guild_id) DO UPDATE
     SET settings = EXCLUDED.settings, updated_at = NOW()
   `, [guildId, settings]);
+}
+
+export async function saveArchivedTicket(ticket, messages) {
+  const row = { channelId: String(ticket.id), guildId: String(ticket.guildId), deletedAt: new Date().toISOString(), ticket, messages };
+  if (!ready) {
+    archivedTickets.set(row.channelId, row);
+    return;
+  }
+  await pool.query(`
+    INSERT INTO archived_tickets (channel_id, guild_id, deleted_at, ticket, messages)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (channel_id) DO UPDATE SET
+      guild_id = EXCLUDED.guild_id, deleted_at = EXCLUDED.deleted_at,
+      ticket = EXCLUDED.ticket, messages = EXCLUDED.messages
+  `, [row.channelId, row.guildId, row.deletedAt, row.ticket, row.messages]);
+}
+
+export async function listArchivedTickets(guildId) {
+  if (!ready) return [...archivedTickets.values()].filter((row) => row.guildId === String(guildId)).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  const result = await pool.query('SELECT channel_id, guild_id, deleted_at, ticket FROM archived_tickets WHERE guild_id = $1 ORDER BY deleted_at DESC', [String(guildId)]);
+  return result.rows.map((row) => ({ channelId: row.channel_id, guildId: row.guild_id, deletedAt: new Date(row.deleted_at).toISOString(), ticket: row.ticket }));
+}
+
+export async function getArchivedTicket(channelId, guildId) {
+  if (!ready) {
+    const row = archivedTickets.get(String(channelId));
+    return row?.guildId === String(guildId) ? row : null;
+  }
+  const result = await pool.query('SELECT channel_id, guild_id, deleted_at, ticket, messages FROM archived_tickets WHERE channel_id = $1 AND guild_id = $2', [String(channelId), String(guildId)]);
+  const row = result.rows[0];
+  return row ? { channelId: row.channel_id, guildId: row.guild_id, deletedAt: new Date(row.deleted_at).toISOString(), ticket: row.ticket, messages: row.messages } : null;
 }
 
 async function purgeOld() {
