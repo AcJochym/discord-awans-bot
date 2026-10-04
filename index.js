@@ -6,6 +6,7 @@ import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, getStaff } from './staff.js';
+import { registerTicketRoutes } from './ticketsPanel.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
 
 const app = express();
@@ -958,6 +959,8 @@ app.get('/api/staff', requireDashboardAuth, async (req, res) => {
     });
   }
 });
+
+registerTicketRoutes(app, { requireDashboardAuth, serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, addDashboardLog, express });
 
 app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   try {
