@@ -52,6 +52,24 @@ export function staffRoleIds(cfg = {}, guildId = '') {
   return out;
 }
 
+export function ticketAccessRoleIds(cfg = {}, ticket = {}) {
+  const t = cfg.TICKETS || {};
+  const typeId = String(ticket.typeId || ticket.ID || '');
+  const commandTypes = t.COMMAND?.TYPES || [];
+  const ftdTypes = t.FTD?.TYPES || [];
+  const type = [...commandTypes, ...ftdTypes, ...(t.TYPES || [])].find((item) => String(item.ID) === typeId);
+  const ftdTicket = ticket.panelMode === 'ftd' || (!ticket.panelMode && ftdTypes.some((item) => String(item.ID) === typeId));
+  const groups = ftdTicket
+    ? [typeId === 'ftd' ? 'command_ftd' : 'ftd']
+    : typeId === 'high_command' ? ['high_command']
+      : typeId === 'command' ? ['high_command', 'command']
+        : typeId === 'medium_command' ? ['high_command', 'command', 'medium_command']
+          : [];
+  const roles = staffRoleIds(cfg, String(ticket.guildId || ''));
+  if (groups.length) return [...new Set(groups.flatMap((group) => roles[group] || []))];
+  return ids(type?.SUPPORT_ROLE_IDS);
+}
+
 async function api(pathname) {
   const res = await fetch(`${API}${pathname}`, { headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` } });
   if (!res.ok) {
