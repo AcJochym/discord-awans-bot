@@ -3,6 +3,7 @@
 import fetch from 'node-fetch';
 import { getArchivedTicket, listArchivedTickets } from './logStore.js';
 import { STAFF_GROUPS, staffRoleIds } from './staff.js';
+import { getTicketPanelClaim, performPanelTicketAction } from './tickets.js';
 
 const API = 'https://discord.com/api/v10';
 const VIEW = 1n << 10n;
@@ -208,6 +209,26 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
     };
   }
 
+  async function ticketActionPermissions(user, guildId, channel, ticket) {
+    if (botOwnerId && user.id === botOwnerId) return { isAdmin: true, isStaff: true, canClose: true, canDelete: true };
+    const [member, roles, info] = await Promise.all([getMember(guildId, user.id), getRoles(guildId), getGuildInfo(guildId, true)]);
+    if (!member) return { isAdmin: false, isStaff: false, canClose: false, canDelete: false };
+    const roleMap = new Map(roles.map((role) => [role.id, role]));
+    const requiredRoles = serverConfigs[guildId].REQUIRED_ROLE_IDS || [];
+    const isAdmin = user.id === info?.owner_id || requiredRoles.some((id) => member.roles.includes(id)) ||
+      Boolean(BigInt(roleMap.get(guildId)?.permissions || 0) & ADMIN) ||
+      member.roles.some((id) => Boolean(BigInt(roleMap.get(id)?.permissions || 0) & ADMIN));
+    const hasTicketRole = (channel.permission_overwrites || []).some((overwrite) =>
+      overwrite.type === 0 && overwrite.id !== guildId && member.roles.includes(overwrite.id) &&
+      (BigInt(overwrite.allow) & VIEW) !== 0n);
+    const isStaff = isAdmin || hasTicketRole;
+    return {
+      isAdmin, isStaff,
+      canClose: isStaff || user.id === ticket.ownerId,
+      canDelete: serverConfigs[guildId].TICKETS?.DELETE_REQUIRES_ADMIN ? isAdmin : isStaff
+    };
+  }
+
   const fail = (res, error, fallback) => {
     console.error('[panel tickety]', error.message);
     const status = error.status === 403 ? 403 : error.status === 404 ? 404 : 502;
@@ -371,6 +392,27 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
     }
   });
 
+  app.get('/api/tickets/:channelId/actions', requireDashboardAuth, async (req, res) => {
+    const ctx = await context(req, res);
+    if (!ctx) return;
+    try {
+      const permissions = await ticketActionPermissions(req.dashUser, ctx.guildId, ctx.channel, ctx.topic);
+      const isOpen = ctx.topic.state === 'open';
+      const isClosed = ctx.topic.state === 'closed';
+      const { claimedBy } = isOpen && permissions.isStaff ? await getTicketPanelClaim(ctx.channel.id) : { claimedBy: null };
+      res.json({
+        ok: true, state: ctx.topic.state, claimedBy,
+        canClose: isOpen && permissions.canClose,
+        canClaim: isOpen && permissions.isStaff && !claimedBy,
+        canUnclaim: isOpen && permissions.isStaff && Boolean(claimedBy) && (permissions.isAdmin || claimedBy === req.dashUser.id),
+        canReopen: isClosed && permissions.isStaff,
+        canDelete: isClosed && permissions.canDelete
+      });
+    } catch (error) {
+      fail(res, error, 'Nie udało się pobrać dostępnych akcji ticketu.');
+    }
+  });
+
   app.get('/api/tickets/:channelId/messages', requireDashboardAuth, async (req, res) => {
     const ctx = await context(req, res);
     if (!ctx) return;
@@ -384,6 +426,38 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       res.json({ ok: true, ticket: await ticketInfo(ctx), canSend: ctx.access.send, messages, hasOlder: raw.length === limit, contentHidden: hidden > 0 });
     } catch (error) {
       fail(res, error, 'Nie udało się pobrać wiadomości.');
+    }
+  });
+
+  app.post('/api/tickets/:channelId/actions', requireDashboardAuth, (req, res, next) => {
+    const origin = req.headers.origin;
+    const base = (process.env.DASHBOARD_BASE_URL || '').trim();
+    if (origin && base) { try { if (origin !== new URL(base.startsWith('http') ? base : `https://${base}`).origin) return res.status(403).json({ ok: false, error: 'Niedozwolone źródło żądania.' }); } catch { /* pomijamy */ } }
+    next();
+  }, express.json({ limit: '2kb' }), async (req, res) => {
+    const ctx = await context(req, res);
+    if (!ctx) return;
+    const action = String(req.body?.action || '');
+    if (!['close', 'claim', 'unclaim', 'reopen', 'delete'].includes(action)) {
+      return res.status(400).json({ ok: false, error: 'Nieznana akcja ticketu.' });
+    }
+    try {
+      const permissions = await ticketActionPermissions(req.dashUser, ctx.guildId, ctx.channel, ctx.topic);
+      const allowed = action === 'close' ? permissions.canClose :
+        action === 'delete' ? permissions.canDelete : permissions.isStaff;
+      if (!allowed) return res.status(403).json({ ok: false, error: 'Nie masz uprawnień do tej akcji.' });
+
+      const result = await performPanelTicketAction({
+        action, guildConfig: serverConfigs[ctx.guildId], guildId: ctx.guildId, channelId: ctx.channel.id,
+        actorId: req.dashUser.id, actorName: req.dashUser.name, appId: process.env.DISCORD_APPLICATION_ID,
+        isAdmin: permissions.isAdmin, reason: String(req.body?.reason || '').slice(0, 500)
+      });
+      const actionLabels = { close: 'zamknął', claim: 'przejął', unclaim: 'oddał', reopen: 'otworzył ponownie', delete: 'usunął' };
+      addDashboardLog('info', `Panel: ${req.dashUser.name} ${actionLabels[action]} ticket #${ctx.channel.name}.`, { source: 'server', guildId: ctx.guildId });
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error('[panel tickety] akcja:', error.message);
+      res.status(400).json({ ok: false, error: error.message || 'Nie udało się wykonać akcji.' });
     }
   });
 
