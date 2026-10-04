@@ -7,7 +7,7 @@ import fetch from 'node-fetch';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, getStaff } from './staff.js';
 import { registerTicketRoutes } from './ticketsPanel.js';
-import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode } from './logStore.js';
+import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -538,6 +538,31 @@ async function sendChannelMessage(channelId, payload) {
   }
 }
 
+let absenceReminderRunning = false;
+async function processAbsenceReturnReminders() {
+  if (absenceReminderRunning) return;
+  absenceReminderRunning = true;
+  try {
+    const today = todayInWarsaw();
+    const due = await listAbsenceReminders(today);
+    for (const absence of due) {
+      const config = serverConfigs[absence.guildId];
+      const channelId = config?.CHANNELS?.[absence.kind === 'vacation' ? 'URLOP' : 'ZAWIESZENIE'];
+      if (!channelId || channelId === 'ID' || channelId === 'ID_KANALU') continue;
+      const period = absence.kind === 'vacation' ? 'urlopu' : 'zawieszenia';
+      const sent = await sendChannelMessage(channelId, {
+        content: `🔔 <@${absence.userId}> — dziś (${absence.returnsOn}) kończy się okres ${period}. Zgodnie z rejestrem przypada Twój powrót.`,
+        allowed_mentions: { users: [absence.userId] }
+      });
+      if (sent?.id) await markAbsenceReminderSent(absence.id);
+    }
+  } catch (error) {
+    console.error('Nie udało się sprawdzić przypomnień o powrotach:', error.message);
+  } finally {
+    absenceReminderRunning = false;
+  }
+}
+
 // --- LOG O AKTUALIZACJI BOTA (najnowszy commit z GitHub) ---
 async function fetchLatestGithubCommit(repo, branch) {
   try {
@@ -627,6 +652,47 @@ function parseStrictDate(value) {
     return null;
   }
   return date;
+}
+
+function strictDateToIso(value) {
+  const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(String(value || '').trim());
+  if (!match || !parseStrictDate(value)) return null;
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}
+
+function todayInWarsaw() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function parseSuspensionReturnDate(value) {
+  const raw = String(value || '').trim();
+  const explicitDate = /(?:^|\s)(\d{2}\.\d{2}\.\d{4})(?:$|\s)/.exec(raw)?.[1];
+  if (explicitDate) return strictDateToIso(explicitDate);
+  const duration = /^(?:na\s+)?(\d{1,3})\s*(dni?|dzień|dnia|tyg(?:odnie|odni|odnia)?|tydzień|tygodnia|tygodnie|tygodni|miesiąc|miesiąca|miesiące|miesięcy|rok|roku|lata|lat)$/i.exec(raw);
+  if (!duration) return null;
+
+  const amount = Number(duration[1]);
+  if (!Number.isInteger(amount) || amount < 1) return null;
+  const unit = duration[2].toLocaleLowerCase('pl-PL');
+  const target = new Date(`${todayInWarsaw()}T00:00:00Z`);
+  if (/^(?:d|dzień|dnia)/.test(unit)) target.setUTCDate(target.getUTCDate() + amount);
+  else if (/^(?:tyg|tydzień|tygod)/.test(unit)) target.setUTCDate(target.getUTCDate() + amount * 7);
+  else if (/^(?:mies)/.test(unit)) {
+    const day = target.getUTCDate();
+    target.setUTCDate(1);
+    target.setUTCMonth(target.getUTCMonth() + amount);
+    const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+    target.setUTCDate(Math.min(day, lastDay));
+  } else target.setUTCFullYear(target.getUTCFullYear() + amount);
+  return target.toISOString().slice(0, 10);
+}
+
+function embedFieldValue(description, label) {
+  return new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n]+)`).exec(String(description || ''))?.[1]?.trim() || '';
 }
 
 // --- LOGOWANIE DO PANELU: Discord OAuth2 + sprawdzanie roli na serwerze ---
@@ -1004,6 +1070,30 @@ app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   }
 });
 
+app.get('/api/absences', requireDashboardAuth, async (req, res) => {
+  const guildId = String(req.query.guild || '');
+  if (guildId && !Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
+  try {
+    const today = todayInWarsaw();
+    const [absences, guilds] = await Promise.all([
+      listActiveAbsences(today, guildId || null),
+      Promise.all(Object.keys(serverConfigs).map(async (id) => ({ id, name: (await getGuildInfo(id, true))?.name || id })))
+    ]);
+    const names = new Map(guilds.map((guild) => [guild.id, guild.name]));
+    res.json({
+      ok: true, today, guildId,
+      guilds,
+      absences: absences.map((absence) => ({
+        ...absence, guildName: names.get(absence.guildId) || absence.guildId,
+        status: absence.startsOn > today ? 'upcoming' : 'active'
+      }))
+    });
+  } catch (error) {
+    console.error('Błąd pobierania urlopów i zawieszeń:', error.message);
+    res.status(500).json({ ok: false, error: 'Nie udało się pobrać urlopów i zawieszeń.' });
+  }
+});
+
 app.get('/api/config/:guildId', requireDashboardAuth, requireBotOwner, (req, res) => {
   const guildId = String(req.params.guildId);
   if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
@@ -1155,6 +1245,18 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
         // Operacje w tle (bez await)
         const urlopRoleId = guildConfig.ROLES?.URLOP_ROLE_ID;
         const roleAdded = urlopRoleId ? await addRoleToMember(interaction.guild_id, targetUserId, urlopRoleId) : false;
+
+        try {
+          await saveAbsence({
+            id: messageId || interaction.id, guildId: interaction.guild_id, userId: targetUserId,
+            displayName: originalEmbed.author?.name || targetUserId, kind: 'vacation',
+            reason: embedFieldValue(originalEmbed.description, 'Powód'),
+            startsOn: strictDateToIso(embedFieldValue(originalEmbed.description, 'Rozpoczęcie')) || todayInWarsaw(),
+            returnsOn: strictDateToIso(embedFieldValue(originalEmbed.description, 'Zakończenie'))
+          });
+        } catch (error) {
+          console.error('Nie udało się zapisać zaakceptowanego urlopu:', error.message);
+        }
 
         const dmOk = await sendDM(targetUserId, `🎉 Twój wniosek o urlop został **ZAAKCEPTOWANY** przez administratora **${adminName}**!`);
 
@@ -1542,6 +1644,18 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       usersWithPendingUrlop.add(interaction.member.user.id);
     }
 
+    if (name === 'zawieszenie' && opts.kto && sentMessage.id) {
+      try {
+        await saveAbsence({
+          id: sentMessage.id, guildId: interaction.guild_id, userId: opts.kto,
+          displayName: opts.imie_nazwisko || opts.kto, kind: 'suspension', reason: opts.powod,
+          startsOn: todayInWarsaw(), returnsOn: parseSuspensionReturnDate(opts.czas)
+        });
+      } catch (error) {
+        console.error('Nie udało się zapisać zawieszenia:', error.message);
+      }
+    }
+
     // --- LOGOWANIE UŻYCIA KOMENDY (W TLE) ---
     let opcjeTekst = "";
     if (Object.keys(opts).length > 0) {
@@ -1580,6 +1694,8 @@ const SERVER_PORT = process.env.PORT || 8080;
 async function startServer() {
   await logStoreReady;
   await loadSavedServerConfigs();
+  processAbsenceReturnReminders();
+  setInterval(processAbsenceReturnReminders, 60 * 1000).unref();
   app.listen(SERVER_PORT, '0.0.0.0', () => {
     console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
     addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`, { source: 'bot' });
