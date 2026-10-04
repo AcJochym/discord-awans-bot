@@ -161,6 +161,7 @@
                 <button type="button" data-v="open" aria-pressed="true">Otwarte</button>
                 <button type="button" data-v="closed" aria-pressed="false">Zamknięte</button>
                 <button type="button" data-v="all" aria-pressed="false">Wszystkie</button>
+                <button type="button" data-v="deleted" aria-pressed="false">Usunięte</button>
               </div>
               <input type="search" id="tkSearch" placeholder="Szukaj ticketu lub osoby…" maxlength="60" />
             </div>
@@ -186,7 +187,7 @@
                 <div id="tkMsgs"></div>
               </div>
               <button type="button" id="tkJump" class="tk-jump" hidden>Nowe wiadomości ↓</button>
-              <div class="tk-composer">
+              <div id="tkComposer" class="tk-composer">
                 <div id="tkFiles" class="tk-files"></div>
                 <div class="tk-compose-row">
                   <label class="tk-attach" title="Dodaj załącznik (max 3 pliki po 8 MB)">
@@ -1020,7 +1021,12 @@
       async function tkFetchMessages(before) {
         const id = tk.current?.id;
         if (!id) return null;
-        const url = `/api/tickets/${id}/messages?limit=${before ? 100 : 60}${before ? `&before=${before}` : ''}`;
+        const archived = tk.state === 'deleted';
+        const path = archived ? `/api/tickets/archived/${id}/messages` : `/api/tickets/${id}/messages`;
+        const params = new URLSearchParams({ guild: tk.guild });
+        if (!archived) params.set('limit', before ? '100' : '60');
+        if (before) params.set('before', before);
+        const url = `${path}?${params}`;
         const response = await apiFetch(url);
         const data = await response.json().catch(() => ({ ok: false }));
         if (tk.current?.id !== id) return null;
@@ -1035,13 +1041,16 @@
         tkEl('tkTitle').textContent = `#${t.name}`;
         tkEl('tkSub').textContent = `${t.ownerName} • ${t.typeLabel}`;
         const pill = tkEl('tkStatePill');
-        pill.textContent = t.state === 'closed' ? 'Zamknięty' : 'Otwarty';
-        pill.className = `tiny-pill ${t.state === 'closed' ? 'error' : 'online'}`;
-        tkEl('tkOpenDc').href = t.url;
+        pill.textContent = t.archived ? 'Usunięty • archiwum' : t.state === 'closed' ? 'Zamknięty' : 'Otwarty';
+        pill.className = `tiny-pill ${t.archived || t.state === 'closed' ? 'error' : 'online'}`;
+        tkEl('tkOpenDc').hidden = Boolean(t.archived);
+        if (!t.archived) tkEl('tkOpenDc').href = t.url;
+        tkEl('tkComposer').hidden = Boolean(t.archived);
         tk.canSend = canSend;
         tkEl('tkInput').disabled = !canSend;
         tkEl('tkSend').disabled = !canSend || tk.sending;
         tkEl('tkInput').placeholder = canSend ? 'Napisz odpowiedź… (Enter = wyślij, Shift+Enter = nowa linia)' : 'Tylko podgląd — nie masz uprawnień do pisania w tym tickecie.';
+        if (t.archived) tkSetNotice(`Ticket usunięty ${tkTime(t.deletedAt)}. Archiwum jest dostępne tylko do odczytu.`);
       }
 
       async function openTicket(id) {
@@ -1066,11 +1075,11 @@
         tkApplyHeader(data.ticket, data.canSend);
         if (data.contentHidden) tkSetNotice('Część wiadomości nie ma treści widocznej dla bota. Włącz „Message Content Intent" w Developer Portal (Bot → Privileged Gateway Intents).');
         syncMessages();
-        tkEl('tkInput').focus();
+        if (data.canSend) tkEl('tkInput').focus();
       }
 
       async function tkPoll() {
-        if (!tk.current?.id || !tkEl('ticketsTab').classList.contains('active') || document.hidden || tk.sending) return;
+        if (!tk.current?.id || tk.current.archived || !tkEl('ticketsTab').classList.contains('active') || document.hidden || tk.sending) return;
         const data = await tkFetchMessages();
         if (!data) return;
         tkApplyHeader(data.ticket, data.canSend);
@@ -1117,9 +1126,10 @@
           const b = document.createElement('button');
           b.type = 'button';
           b.className = `tk-item${tk.current?.id === t.id ? ' active' : ''}${unread(t) ? ' unread' : ''}`;
+          const statusLabel = t.state === 'deleted' ? 'Usunięty' : t.state === 'closed' ? 'Zamk.' : 'Otw.';
           b.innerHTML = `<img src="${esc(t.ownerAvatar)}" alt="" loading="lazy" />
             <span class="tk-item-text"><strong>${esc(t.ownerName)}</strong><span class="muted">#${esc(t.name)}</span><span class="muted">${esc(t.typeLabel)}</span></span>
-            <span class="tk-item-meta"><span class="tiny-pill ${t.state === 'closed' ? 'error' : 'online'}">${t.state === 'closed' ? 'Zamk.' : 'Otw.'}</span><span class="muted">${esc(tkAgo(t.lastMessageAt))}</span>${unread(t) ? '<i class="tk-dot"></i>' : ''}</span>`;
+            <span class="tk-item-meta"><span class="tiny-pill ${t.state === 'closed' || t.state === 'deleted' ? 'error' : 'online'}">${statusLabel}</span><span class="muted">${esc(tkAgo(t.state === 'deleted' ? t.deletedAt : t.lastMessageAt))}</span>${unread(t) ? '<i class="tk-dot"></i>' : ''}</span>`;
           b.addEventListener('click', () => openTicket(t.id));
           return b;
         }));
@@ -1127,7 +1137,8 @@
 
       async function loadTickets() {
         try {
-          const data = await (await apiFetch(`/api/tickets${tk.guild ? `?guild=${encodeURIComponent(tk.guild)}` : ''}`)).json();
+          const endpoint = tk.state === 'deleted' ? '/api/tickets/archived' : '/api/tickets';
+          const data = await (await apiFetch(`${endpoint}${tk.guild ? `?guild=${encodeURIComponent(tk.guild)}` : ''}`)).json();
           if (!data.ok) { tkList.innerHTML = `<div class="empty">${esc(data.error || 'Nie udało się pobrać ticketów.')}</div>`; return; }
           tk.guild = data.guildId;
           const sel = tkEl('tkGuild');
@@ -1145,7 +1156,11 @@
         tk.state = b.dataset.v;
         tkEl('tkState').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
         tk.listSig = '';
-        renderTicketList();
+        tk.current = null;
+        tkEl('tkPane').hidden = true;
+        tkEl('tkEmpty').hidden = false;
+        tkEl('tkLayout').classList.remove('tk-open');
+        loadTickets();
       });
       let tkSearchTimer;
       tkEl('tkSearch').addEventListener('input', (e) => { clearTimeout(tkSearchTimer); tkSearchTimer = setTimeout(() => { tk.q = e.target.value.trim(); tk.listSig = ''; renderTicketList(); }, 200); });
