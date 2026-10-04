@@ -1,6 +1,7 @@
 // Panel ticketów: lista, podgląd całej rozmowy i odpowiadanie z poziomu strony.
 // Dostęp odwzorowuje Discorda — widzisz tylko kanały, które widziałbyś na serwerze (uprawnienia ról i nadpisania kanału).
 import fetch from 'node-fetch';
+import { getArchivedTicket, listArchivedTickets } from './logStore.js';
 
 const API = 'https://discord.com/api/v10';
 const VIEW = 1n << 10n;
@@ -246,6 +247,59 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       res.json({ ok: true, guilds, guildId, tickets });
     } catch (error) {
       fail(res, error, 'Nie udało się pobrać listy ticketów.');
+    }
+  });
+
+  app.get('/api/tickets/archived', requireDashboardAuth, async (req, res) => {
+    const guildId = pickGuild(String(req.query.guild || ''));
+    try {
+      const [archives, check, guilds] = await Promise.all([
+        listArchivedTickets(guildId), accessChecker(req.dashUser, guildId),
+        Promise.all(Object.keys(serverConfigs).map(async (id) => ({ id, name: (await getGuildInfo(id, true))?.name || id })))
+      ]);
+      const visible = archives.filter((row) => check({ guild_id: guildId, permission_overwrites: row.ticket.permission_overwrites || [] }).view);
+      const owners = new Map();
+      await mapLimit([...new Set(visible.map((row) => row.ticket.ownerId))], 5, async (id) => { owners.set(id, await getPerson(guildId, id)); });
+      const tickets = visible.map(({ ticket, deletedAt }) => ({
+        id: ticket.id, name: ticket.name, number: ticket.number, state: 'deleted', typeLabel: ticket.typeLabel,
+        ownerId: ticket.ownerId, ownerName: owners.get(ticket.ownerId)?.name || 'Nieznany użytkownik',
+        ownerAvatar: owners.get(ticket.ownerId)?.avatarUrl || defaultAvatar(ticket.ownerId),
+        lastMessageAt: ticket.lastMessageAt, createdAt: ticket.createdAt, deletedAt
+      }));
+      res.json({ ok: true, guilds, guildId, tickets });
+    } catch (error) {
+      fail(res, error, 'Nie udało się pobrać archiwum ticketów.');
+    }
+  });
+
+  app.get('/api/tickets/archived/:channelId/messages', requireDashboardAuth, async (req, res) => {
+    const id = String(req.params.channelId || '');
+    const guildId = pickGuild(String(req.query.guild || ''));
+    if (!isId(id)) return res.status(400).json({ ok: false, error: 'Niepoprawne ID ticketu.' });
+    try {
+      const archive = await getArchivedTicket(id, guildId);
+      if (!archive) return res.status(404).json({ ok: false, error: 'Nie znaleziono ticketu w archiwum.' });
+      const check = await accessChecker(req.dashUser, guildId);
+      if (!check({ guild_id: guildId, permission_overwrites: archive.ticket.permission_overwrites || [] }).view) {
+        return res.status(403).json({ ok: false, error: 'Nie masz dostępu do tego ticketu.' });
+      }
+      const raw = archive.messages || [];
+      const before = isId(req.query.before) ? raw.findIndex((message) => message.id === req.query.before) : -1;
+      const end = before >= 0 ? before : raw.length;
+      const start = Math.max(0, end - (before ? 100 : 60));
+      const messages = await shapeMessages(raw.slice(start, end), guildId);
+      const owner = await getPerson(guildId, archive.ticket.ownerId);
+      res.json({
+        ok: true,
+        ticket: {
+          id: archive.ticket.id, guildId, name: archive.ticket.name, state: 'deleted', number: archive.ticket.number,
+          typeLabel: archive.ticket.typeLabel, ownerId: archive.ticket.ownerId, ownerName: owner?.name || 'Nieznany użytkownik',
+          ownerAvatar: owner?.avatarUrl || defaultAvatar(archive.ticket.ownerId), deletedAt: archive.deletedAt, archived: true
+        },
+        canSend: false, messages, hasOlder: start > 0, contentHidden: false
+      });
+    } catch (error) {
+      fail(res, error, 'Nie udało się wczytać ticketu z archiwum.');
     }
   });
 
