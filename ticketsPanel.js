@@ -422,6 +422,10 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       const raw = await api('GET', `/channels/${ctx.channel.id}/messages?limit=${limit}${before}`);
       raw.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
       const messages = await shapeMessages(raw, ctx.guildId);
+      messages.forEach((message, index) => {
+        message.mine = message.author.id === req.dashUser.id;
+        message.panelReply = (raw[index].embeds || []).some((embed) => embed.footer?.text === 'Odpowiedź z panelu');
+      });
       const hidden = raw.filter((m) => !m.author.bot && !m.content && !m.embeds?.length && !m.attachments?.length && !m.sticker_items?.length && m.type === 0).length;
       res.json({ ok: true, ticket: await ticketInfo(ctx), canSend: ctx.access.send, messages, hasOlder: raw.length === limit, contentHidden: hidden > 0 });
     } catch (error) {
@@ -497,17 +501,19 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       allowed_mentions: ping ? { users: [ctx.topic.ownerId] } : { parse: [] }
     };
     try {
+      let sentMessage;
       if (files.length) {
         const form = new FormData();
         form.append('payload_json', JSON.stringify({ ...payload, attachments: files.map((f, i) => ({ id: i, filename: f.name })) }));
         files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.buffer], { type: f.type }), f.name));
         const r = await globalThis.fetch(`${API}/channels/${ctx.channel.id}/messages`, { method: 'POST', headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }, body: form });
         if (!r.ok) throw Object.assign(new Error(`Discord HTTP ${r.status}`), { status: r.status });
+        sentMessage = await r.json().catch(() => null);
       } else {
-        await api('POST', `/channels/${ctx.channel.id}/messages`, payload);
+        sentMessage = await api('POST', `/channels/${ctx.channel.id}/messages`, payload);
       }
       addDashboardLog('info', `Panel: ${name} odpowiedział w tickecie #${ctx.channel.name}.`, { source: 'server', guildId: ctx.guildId });
-      res.json({ ok: true });
+      res.json({ ok: true, messageId: sentMessage?.id || null });
     } catch (error) {
       console.error('[panel tickety] wysyłanie:', error.message);
       res.status(502).json({ ok: false, error: error.status === 403 ? 'Bot nie może pisać w tym kanale (brak uprawnienia Wysyłanie wiadomości).' : 'Nie udało się wysłać wiadomości.' });
