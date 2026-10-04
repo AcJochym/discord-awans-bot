@@ -2,7 +2,7 @@
 // Dostęp odwzorowuje Discorda — widzisz tylko kanały, które widziałbyś na serwerze (uprawnienia ról i nadpisania kanału).
 import fetch from 'node-fetch';
 import { getArchivedTicket, listArchivedTickets } from './logStore.js';
-import { STAFF_GROUPS, staffRoleIds } from './staff.js';
+import { STAFF_GROUPS, staffRoleIds, ticketAccessRoleIds } from './staff.js';
 import { getTicketPanelClaim, performPanelTicketAction } from './tickets.js';
 
 const API = 'https://discord.com/api/v10';
@@ -114,7 +114,7 @@ export async function broadcastTicketGatewayMessage(message) {
     }
     try {
       const check = await client.accessChecker(guildId);
-      if (check(accessChannel).view) client.res.write(encoded);
+      if (check(accessChannel, parseTopic(channel)).view) client.res.write(encoded);
     } catch (error) {
       console.error('[SSE tickety] Nie udało się sprawdzić uprawnień:', error.message);
     }
@@ -154,7 +154,7 @@ function parseTopic(channel) {
   if (typeof channel.topic !== 'string' || !channel.topic.startsWith('ticket|')) return null;
   const p = channel.topic.split('|');
   if (!isId(p[1])) return null;
-  return { ownerId: p[1], typeId: p[2] || '', state: p[3] === 'closed' ? 'closed' : 'open', number: p[4] || '' };
+  return { ownerId: p[1], typeId: p[2] || '', state: p[3] === 'closed' ? 'closed' : 'open', number: p[4] || '', panelMode: p[5], guildId: channel.guild_id };
 }
 
 function typeLabel(cfg, typeId) {
@@ -266,18 +266,22 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
 
   // Zwraca funkcję sprawdzającą uprawnienia użytkownika do danego kanału
   async function accessChecker(user, guildId) {
-    if (botOwnerId && user.id === botOwnerId) return () => ({ view: true, send: true });
     const [member, roles, info] = await Promise.all([getMember(guildId, user.id), getRoles(guildId), getGuildInfo(guildId, true)]);
     if (!member) return () => ({ view: false, send: false });
     const roleMap = new Map(roles.map((r) => [r.id, r]));
-    return (channel) => {
+    return (channel, ticket = parseTopic(channel)) => {
+      if (!ticket) return { view: false, send: false };
+      if (ticket.ownerId === user.id) return { view: true, send: true };
+      const accessRoles = ticketAccessRoleIds(serverConfigs[guildId], { ...ticket, guildId });
+      if (member.roles.some((id) => accessRoles.includes(id))) return { view: true, send: true };
+      const memberOverwrite = (channel.permission_overwrites || []).find((overwrite) => overwrite.type === 1 && overwrite.id === user.id);
+      if (!memberOverwrite || (BigInt(memberOverwrite.allow) & VIEW) === 0n) return { view: false, send: false };
       const p = permsFor(member, roleMap, channel, guildId, info?.owner_id, user.id);
       return { view: (p & VIEW) !== 0n, send: (p & SEND) !== 0n };
     };
   }
 
   async function ticketActionPermissions(user, guildId, channel, ticket) {
-    if (botOwnerId && user.id === botOwnerId) return { isAdmin: true, isStaff: true, canClose: true, canDelete: true };
     const [member, roles, info] = await Promise.all([getMember(guildId, user.id), getRoles(guildId), getGuildInfo(guildId, true)]);
     if (!member) return { isAdmin: false, isStaff: false, canClose: false, canDelete: false };
     const roleMap = new Map(roles.map((role) => [role.id, role]));
@@ -285,10 +289,8 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
     const isAdmin = user.id === info?.owner_id || requiredRoles.some((id) => member.roles.includes(id)) ||
       Boolean(BigInt(roleMap.get(guildId)?.permissions || 0) & ADMIN) ||
       member.roles.some((id) => Boolean(BigInt(roleMap.get(id)?.permissions || 0) & ADMIN));
-    const hasTicketRole = (channel.permission_overwrites || []).some((overwrite) =>
-      overwrite.type === 0 && overwrite.id !== guildId && member.roles.includes(overwrite.id) &&
-      (BigInt(overwrite.allow) & VIEW) !== 0n);
-    const isStaff = isAdmin || hasTicketRole;
+    const accessRoles = ticketAccessRoleIds(serverConfigs[guildId], { ...ticket, guildId });
+    const isStaff = member.roles.some((id) => accessRoles.includes(id));
     return {
       isAdmin, isStaff,
       canClose: isStaff || user.id === ticket.ownerId,
@@ -311,7 +313,7 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       const topic = parseTopic(channel);
       if (!topic || !serverConfigs[channel.guild_id]) { res.status(404).json({ ok: false, error: 'To nie jest ticket.' }); return null; }
       const check = await accessChecker(req.dashUser, channel.guild_id);
-      const access = check(channel);
+      const access = check(channel, topic);
       if (!access.view) { res.status(403).json({ ok: false, error: 'Nie masz dostępu do tego ticketu.' }); return null; }
       return { channel, topic, access, guildId: channel.guild_id };
     } catch (error) {
@@ -359,7 +361,10 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
         listArchivedTickets(guildId), accessChecker(req.dashUser, guildId),
         Promise.all(Object.keys(serverConfigs).map(async (id) => ({ id, name: (await getGuildInfo(id, true))?.name || id })))
       ]);
-      const visible = archives.filter((row) => check({ guild_id: guildId, permission_overwrites: row.ticket.permission_overwrites || [] }).view);
+      const visible = archives.filter((row) => check(
+        { guild_id: guildId, permission_overwrites: row.ticket.permission_overwrites || [] },
+        { typeId: row.ticket.typeId, ownerId: row.ticket.ownerId, panelMode: row.ticket.panelMode }
+      ).view);
       const owners = new Map();
       await mapLimit([...new Set(visible.map((row) => row.ticket.ownerId))], 5, async (id) => { owners.set(id, await getPerson(guildId, id)); });
       const tickets = visible.map(({ ticket, deletedAt }) => ({
@@ -382,7 +387,10 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       const archive = await getArchivedTicket(id, guildId);
       if (!archive) return res.status(404).json({ ok: false, error: 'Nie znaleziono ticketu w archiwum.' });
       const check = await accessChecker(req.dashUser, guildId);
-      if (!check({ guild_id: guildId, permission_overwrites: archive.ticket.permission_overwrites || [] }).view) {
+      if (!check(
+        { guild_id: guildId, permission_overwrites: archive.ticket.permission_overwrites || [] },
+        { typeId: archive.ticket.typeId, ownerId: archive.ticket.ownerId, panelMode: archive.ticket.panelMode }
+      ).view) {
         return res.status(403).json({ ok: false, error: 'Nie masz dostępu do tego ticketu.' });
       }
       const raw = archive.messages || [];
@@ -419,7 +427,10 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       if (!archive) return res.status(404).json({ ok: false, error: 'Nie znaleziono ticketu w archiwum.' });
       overwrites = archive.ticket.permission_overwrites || [];
       const check = await accessChecker(req.dashUser, guildId);
-      if (!check({ guild_id: guildId, permission_overwrites: overwrites }).view) {
+      if (!check(
+        { guild_id: guildId, permission_overwrites: overwrites },
+        { typeId: archive.ticket.typeId, ownerId: archive.ticket.ownerId, panelMode: archive.ticket.panelMode }
+      ).view) {
         return res.status(403).json({ ok: false, error: 'Nie masz dostępu do tego ticketu.' });
       }
     } else {
