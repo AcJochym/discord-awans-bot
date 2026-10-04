@@ -179,6 +179,13 @@
                   <span id="tkSub" class="muted"></span>
                 </div>
                 <span id="tkStatePill" class="tiny-pill"></span>
+                <div id="tkActions" class="tk-actions" hidden>
+                  <button type="button" id="tkActionClose" class="ghost-btn" hidden>Zamknij</button>
+                  <button type="button" id="tkActionClaim" class="ghost-btn" hidden>Przejmij</button>
+                  <button type="button" id="tkActionUnclaim" class="ghost-btn" hidden>Oddaj</button>
+                  <button type="button" id="tkActionReopen" class="ghost-btn" hidden>Otwórz ponownie</button>
+                  <button type="button" id="tkActionDelete" class="ghost-btn danger-btn" hidden>Usuń</button>
+                </div>
                 <a id="tkOpenDc" class="ghost-btn" target="_blank" rel="noopener noreferrer">Otwórz w Discordzie</a>
               </div>
               <div id="tkNotice" class="tk-notice" hidden></div>
@@ -884,7 +891,7 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
 
       /* --- Tickety w panelu: lista, rozmowa jak na Discordzie, odpowiadanie --- */
-      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, atBottom: true };
+      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, atBottom: true };
       const tkEl = (id) => document.getElementById(id);
       const tkList = tkEl('tkList');
       const tkMsgs = tkEl('tkMsgs');
@@ -1072,11 +1079,25 @@
         tkEl('tkOpenDc').hidden = Boolean(t.archived);
         if (!t.archived) tkEl('tkOpenDc').href = t.url;
         tkEl('tkComposer').hidden = Boolean(t.archived);
+        tkEl('tkActions').hidden = Boolean(t.archived);
         tk.canSend = canSend;
         tkEl('tkInput').disabled = !canSend;
         tkEl('tkSend').disabled = !canSend || tk.sending;
         tkEl('tkInput').placeholder = canSend ? 'Napisz odpowiedź… (Enter = wyślij, Shift+Enter = nowa linia)' : 'Tylko podgląd — nie masz uprawnień do pisania w tym tickecie.';
         if (t.archived) tkSetNotice(`Ticket usunięty ${tkTime(t.deletedAt)}. Archiwum jest dostępne tylko do odczytu.`);
+      }
+
+      function tkApplyActionState(ticket, actions) {
+        const panel = tkEl('tkActions');
+        panel.hidden = Boolean(ticket.archived);
+        const visible = {
+          tkActionClose: !ticket.archived && ticket.state === 'open' && actions?.canClose,
+          tkActionClaim: !ticket.archived && ticket.state === 'open' && actions?.canClaim,
+          tkActionUnclaim: !ticket.archived && ticket.state === 'open' && actions?.canUnclaim,
+          tkActionReopen: !ticket.archived && ticket.state === 'closed' && actions?.canReopen,
+          tkActionDelete: !ticket.archived && ticket.state === 'closed' && actions?.canDelete
+        };
+        Object.entries(visible).forEach(([id, show]) => { tkEl(id).hidden = !show; });
       }
 
       async function openTicket(id) {
@@ -1088,6 +1109,7 @@
         tkRenderFiles();
         tkEl('tkEmpty').hidden = true;
         tkEl('tkPane').hidden = false;
+        tkEl('tkActions').hidden = true;
         tkEl('tkLayout').classList.add('tk-open');
         tkSetNotice('');
         const summary = tk.tickets.find((t) => t.id === id);
@@ -1099,10 +1121,48 @@
         tk.msgs = data.messages;
         tk.hasOlder = data.hasOlder;
         tkApplyHeader(data.ticket, data.canSend);
+        tk.actionState = null;
+        if (!data.ticket.archived) {
+          const actionResponse = await apiFetch(`/api/tickets/${id}/actions`);
+          const actionData = await actionResponse.json().catch(() => ({ ok: false }));
+          if (tk.current?.id !== id) return;
+          if (actionData.ok) tk.actionState = actionData;
+        }
+        tkApplyActionState(data.ticket, tk.actionState);
         if (data.contentHidden) tkSetNotice('Część wiadomości nie ma treści widocznej dla bota. Włącz „Message Content Intent" w Developer Portal (Bot → Privileged Gateway Intents).');
         syncMessages();
         if (data.canSend) tkEl('tkInput').focus();
       }
+
+      async function tkRunAction(action) {
+        const ticketId = tk.current?.id;
+        if (!ticketId || tk.actionBusy) return;
+        if (action === 'delete' && !confirm('Usunąć ten ticket? Jego rozmowa zostanie zachowana w archiwum panelu.')) return;
+        tk.actionBusy = true;
+        tkEl('tkActions').querySelectorAll('button').forEach((button) => { button.disabled = true; });
+        try {
+          const response = await apiFetch(`/api/tickets/${ticketId}/actions`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, reason: action === 'close' ? 'Zamknięto z panelu' : '' })
+          });
+          const result = await response.json().catch(() => ({ ok: false, error: 'Serwer nie zwrócił poprawnej odpowiedzi.' }));
+          if (!result.ok) { tkSetNotice(result.error || 'Nie udało się wykonać akcji.'); return; }
+          if (action === 'delete') {
+            tkEl('tkState').querySelector('[data-v="deleted"]').click();
+            return;
+          }
+          await loadTickets();
+          await openTicket(ticketId);
+        } catch (_) {
+          tkSetNotice('Nie udało się wykonać akcji. Spróbuj ponownie.');
+        } finally {
+          tk.actionBusy = false;
+          tkEl('tkActions').querySelectorAll('button').forEach((button) => { button.disabled = false; });
+        }
+      }
+
+      [['tkActionClose', 'close'], ['tkActionClaim', 'claim'], ['tkActionUnclaim', 'unclaim'], ['tkActionReopen', 'reopen'], ['tkActionDelete', 'delete']]
+        .forEach(([id, action]) => tkEl(id).addEventListener('click', () => tkRunAction(action)));
 
       async function tkPoll() {
         if (!tk.current?.id || tk.current.archived || !tkEl('ticketsTab').classList.contains('active') || document.hidden || tk.sending) return;
