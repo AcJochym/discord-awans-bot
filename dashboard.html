@@ -889,6 +889,20 @@
       const tkList = tkEl('tkList');
       const tkMsgs = tkEl('tkMsgs');
       const tkScroll = tkEl('tkScroll');
+      tkMsgs.addEventListener('error', (event) => {
+        const media = event.target;
+        if (!media.matches?.('.tk-gif')) return;
+        const fallbackSrc = media.dataset.fallbackSrc;
+        if (fallbackSrc && media.src !== fallbackSrc) {
+          media.dataset.fallbackSrc = '';
+          media.src = fallbackSrc;
+          return;
+        }
+        const link = media.closest('.tk-gif-link');
+        if (!link) return;
+        link.classList.add('failed');
+        media.remove();
+      }, true);
       let tkSeen = {};
       try { tkSeen = JSON.parse(localStorage.getItem('tkSeen') || '{}'); } catch (_) { tkSeen = {}; }
       const tkSaveSeen = () => { try { localStorage.setItem('tkSeen', JSON.stringify(tkSeen)); } catch (_) { /* pomijamy */ } };
@@ -914,7 +928,7 @@
         s = s.replace(/`([^`\n]+)`/g, (_, c) => { inlines.push(c); return `\u0000I${inlines.length - 1}\u0000`; });
         s = esc(s);
         s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, (u) => {
-          if (/\.gif(?:[?#]|$)/i.test(u)) return hold(`<a class="tk-gif-link" href="${u}" target="_blank" rel="noopener noreferrer"><img class="tk-gif" src="${u}" alt="GIF" loading="lazy" /></a>`);
+          if (/\.gif(?:[?#]|$)/i.test(u)) return hold(`<a class="tk-gif-link" href="${u}" target="_blank" rel="noopener noreferrer"><img class="tk-gif" src="${u}" alt="GIF" loading="lazy" /><span class="tk-gif-fallback">Otwórz GIF</span></a>`);
           return hold(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
         });
         s = s.replace(/&lt;@!?(\d+)&gt;/g, (_, id) => hold(`<span class="mention">@${esc(mentions.users?.[id] || 'użytkownik')}</span>`));
@@ -944,15 +958,19 @@
 
       function renderEmbed(e, mentions) {
         const fields = e.fields.map((f) => `<div class="e-field${f.inline ? ' inline' : ''}"><div class="e-fname">${renderMd(f.name, mentions)}</div><div class="e-fval">${renderMd(f.value, mentions)}</div></div>`).join('');
-        if (e.type === 'gifv' && e.video) return `<video class="tk-gif" src="${esc(e.video)}" autoplay loop muted playsinline preload="metadata"></video>`;
+        const gifVideo = e.video && (e.type === 'gifv' || /\.(?:gif|mp4|webm)(?:[?#]|$)/i.test(e.video));
+        if (gifVideo) return `<a class="tk-gif-link" href="${esc(e.url || e.video)}" target="_blank" rel="noopener noreferrer"><video class="tk-gif" src="${esc(e.video)}" data-fallback-src="${esc(e.videoProxy || '')}" autoplay loop muted playsinline preload="metadata"></video><span class="tk-gif-fallback">Otwórz GIF</span></a>`;
         const title = e.title ? `<div class="e-title">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>` : esc(e.title)}</div>` : '';
+        const image = e.image && /\.gif(?:[?#]|$)/i.test(e.image)
+          ? `<a class="tk-gif-link" href="${esc(e.url || e.image)}" target="_blank" rel="noopener noreferrer"><img class="e-image tk-gif" src="${esc(e.image)}" data-fallback-src="${esc(e.imageProxy || '')}" alt="GIF" loading="lazy" /><span class="tk-gif-fallback">Otwórz GIF</span></a>`
+          : e.image ? `<img class="e-image" src="${esc(e.image)}" alt="" loading="lazy" />` : '';
         return `<div class="tk-embed" style="--ec:${esc(e.color || '#4f6a8f')}">
           <div class="e-main">
             ${e.author ? `<div class="e-author">${e.author.icon ? `<img src="${esc(e.author.icon)}" alt="" />` : ''}<span>${esc(e.author.name || '')}</span></div>` : ''}
             ${title}
             ${e.description ? `<div class="e-desc">${renderMd(e.description, mentions)}</div>` : ''}
             ${fields ? `<div class="e-fields">${fields}</div>` : ''}
-            ${e.image ? `<img class="e-image" src="${esc(e.image)}" alt="" loading="lazy" />` : ''}
+            ${image}
             ${e.footer || e.timestamp ? `<div class="e-footer">${esc(e.footer || '')}${e.footer && e.timestamp ? ' • ' : ''}${e.timestamp ? esc(tkTime(e.timestamp)) : ''}</div>` : ''}
           </div>
           ${e.thumbnail ? `<img class="e-thumb" src="${esc(e.thumbnail)}" alt="" loading="lazy" />` : ''}
@@ -963,7 +981,8 @@
 
       function renderAttachment(a) {
         if (!a.url) return '';
-        if (/^image\//i.test(a.type) || /\.gif(?:[?#]|$)/i.test(a.name || a.url)) return `<a class="tk-img" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"><img class="tk-gif" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" /></a>`;
+        if (/\.gif(?:[?#]|$)/i.test(a.name || a.url)) return `<a class="tk-img tk-gif-link" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"><img class="tk-gif" src="${esc(a.url)}" data-fallback-src="${esc(a.proxyUrl || '')}" alt="${esc(a.name)}" loading="lazy" /><span class="tk-gif-fallback">Otwórz GIF</span></a>`;
+        if (/^image\//i.test(a.type)) return `<a class="tk-img" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" /></a>`;
         if (/^video\//.test(a.type)) return `<video class="tk-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
         return `<a class="tk-file" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">📎 ${esc(a.name)} <span class="muted">${fmtSize(a.size)}</span></a>`;
       }
@@ -981,7 +1000,7 @@
           return el;
         }
         const ref = m.reference ? `<div class="tk-ref">↪ <strong>${esc(m.reference.author)}</strong> ${esc(m.reference.snippet)}</div>` : '';
-        const messageContent = m.embeds.filter((embed) => embed.type === 'gifv' && embed.url)
+        const messageContent = m.embeds.filter((embed) => (embed.video || embed.image) && embed.url)
           .reduce((content, embed) => content.replace(embed.url, ''), m.content).trim();
         const head = compact ? '' : `<div class="tk-mhead"><button type="button" class="tk-author tk-author-profile" data-user-id="${esc(m.author.id)}">${esc(m.author.name)}</button>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}${m.author.verifiedApplication ? '<span class="verified-app-tag" title="Zweryfikowana aplikacja" aria-label="Zweryfikowana aplikacja">✓</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
         const react = m.reactions.length ? `<div class="tk-reacts">${m.reactions.map((r) => `<span>${r.id ? `<img class="emoji" src="https://cdn.discordapp.com/emojis/${esc(r.id)}.${r.animated ? 'gif' : 'png'}?size=32" alt="" />` : esc(r.name)} ${r.count}</span>`).join('')}</div>` : '';
