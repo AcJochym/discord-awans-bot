@@ -976,7 +976,7 @@
           return el;
         }
         const ref = m.reference ? `<div class="tk-ref">↪ <strong>${esc(m.reference.author)}</strong> ${esc(m.reference.snippet)}</div>` : '';
-        const head = compact ? '' : `<div class="tk-mhead"><strong class="tk-author">${esc(m.author.name)}</strong>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
+        const head = compact ? '' : `<div class="tk-mhead"><button type="button" class="tk-author tk-author-profile" data-user-id="${esc(m.author.id)}">${esc(m.author.name)}</button>${m.author.bot ? '<span class="bot-tag">BOT</span>' : ''}<time title="${esc(tkTime(m.timestamp))}">${esc(tkTime(m.timestamp))}</time></div>`;
         const react = m.reactions.length ? `<div class="tk-reacts">${m.reactions.map((r) => `<span>${r.id ? `<img class="emoji" src="https://cdn.discordapp.com/emojis/${esc(r.id)}.${r.animated ? 'gif' : 'png'}?size=32" alt="" />` : esc(r.name)} ${r.count}</span>`).join('')}</div>` : '';
         el.innerHTML = `${compact ? `<time class="tk-ctime" title="${esc(tkTime(m.timestamp))}">${esc(new Date(m.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }))}</time>` : `<img class="tk-av" src="${esc(m.author.avatarUrl)}" alt="" loading="lazy" />`}
           <div class="tk-mbody">${ref}${head}
@@ -1102,6 +1102,19 @@
         tk.hasOlder = data.hasOlder;
         syncMessages();
         tkScroll.scrollTop = tkScroll.scrollHeight - keep;
+      });
+      tkMsgs.addEventListener('click', async (event) => {
+        const author = event.target.closest('.tk-author-profile');
+        if (!author || !tk.current) return;
+        const archive = tk.current.archived ? '&archived=true' : '';
+        try {
+          const response = await apiFetch(`/api/tickets/${tk.current.id}/profile/${author.dataset.userId}?guild=${encodeURIComponent(tk.current.guildId || tk.guild)}${archive}`);
+          const data = await response.json().catch(() => ({ ok: false }));
+          if (!data.ok) { tkSetNotice(data.error || 'Nie udało się wczytać profilu.'); return; }
+          openProfile(data.member, data.group);
+        } catch (_) {
+          tkSetNotice('Nie udało się wczytać profilu.');
+        }
       });
       tkEl('tkJump').addEventListener('click', () => { tkScroll.scrollTop = tkScroll.scrollHeight; tkEl('tkJump').hidden = true; });
       tkScroll.addEventListener('scroll', () => { if (tkScroll.scrollHeight - tkScroll.scrollTop - tkScroll.clientHeight < 90) tkEl('tkJump').hidden = true; }, { passive: true });
