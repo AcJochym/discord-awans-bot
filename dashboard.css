@@ -534,6 +534,10 @@ body.modal-open { overflow: hidden; }
 .confirm-body h2 { margin: 0 40px 10px 0; }
 .confirm-body > p { color: var(--muted); }
 .confirm-body .config-message { min-height: 1.25em; margin: 10px 0; }
+.clear-logs-options { margin: 14px 0; }
+.clear-logs-guild[hidden] { display: none; }
+.clear-logs-guild .filter-label { display: block; margin-bottom: 6px; }
+.clear-logs-guild .staff-guild { margin: 0; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .modal-close { position: absolute; top: 12px; right: 12px; z-index: 3; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--edge); background: rgba(10, 20, 45, 0.55); color: var(--text); font-size: 1.4rem; line-height: 1; cursor: pointer; transition: background 0.2s, transform 0.25s; }
 .modal-close:hover { background: rgba(255, 143, 143, 0.35); transform: rotate(90deg); }
