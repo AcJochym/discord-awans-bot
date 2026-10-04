@@ -621,6 +621,9 @@ body.modal-open { overflow: hidden; }
 .tk-mbody { min-width: 0; flex: 1; }
 .tk-mhead { display: flex; align-items: baseline; gap: 8px; }
 .tk-author { font: 600 1.05rem var(--display); }
+.tk-author-profile { padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.tk-author-profile:hover { color: #8ecbff; text-decoration: underline; text-underline-offset: 3px; }
+.tk-author-profile:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
 .bot-tag { padding: 0 5px; border-radius: 4px; background: #5865f2; color: #fff; font: 700 0.62rem var(--body); vertical-align: 2px; }
 .tk-mhead time, .tk-msg.system time { color: var(--muted); font-size: 0.72rem; }
 .tk-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
