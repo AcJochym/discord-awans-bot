@@ -136,8 +136,11 @@ function shapeEmbed(e) {
     description: e.description || null,
     fields: (e.fields || []).slice(0, 25).map((f) => ({ name: f.name, value: f.value, inline: Boolean(f.inline) })),
     thumbnail: safeUrl(e.thumbnail?.url),
+    thumbnailProxy: safeUrl(e.thumbnail?.proxy_url),
     image: safeUrl(e.image?.url),
+    imageProxy: safeUrl(e.image?.proxy_url),
     video: safeUrl(e.video?.url),
+    videoProxy: safeUrl(e.video?.proxy_url),
     footer: e.footer?.text || null,
     timestamp: e.timestamp || null
   };
@@ -180,7 +183,7 @@ async function shapeMessages(raw, guildId) {
       content: m.content || '',
       mentions: { users, roles: roleMentions, channels: chans },
       embeds: (m.embeds || []).map(shapeEmbed),
-      attachments: (m.attachments || []).map((a) => ({ id: a.id, name: a.filename, url: safeUrl(a.url), type: a.content_type || '', size: a.size, width: a.width || null, height: a.height || null })),
+      attachments: (m.attachments || []).map((a) => ({ id: a.id, name: a.filename, url: safeUrl(a.url), proxyUrl: safeUrl(a.proxy_url), type: a.content_type || '', size: a.size, width: a.width || null, height: a.height || null })),
       reactions: (m.reactions || []).map((r) => ({ name: r.emoji.name, id: r.emoji.id || null, animated: Boolean(r.emoji.animated), count: r.count })),
       reference: ref ? { id: ref.id, author: nameOf(ref.author.id, ref.author.global_name || ref.author.username), snippet: (ref.content || (ref.embeds?.length ? '[osadzenie]' : '[załącznik]')).slice(0, 120) } : null
     };
@@ -411,9 +414,12 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
 
     const ping = req.body?.pingOwner === true;
     const { id, name, avatar } = req.dashUser;
+    const containsGifLink = /https?:\/\/[^\s<]*(?:\.gif(?:[?#][^\s<]*)?|tenor\.com\/view\/[^\s<]*|giphy\.com\/(?:gifs|clips)\/[^\s<]*)/i.test(text);
+    const containsGifFile = files.some((file) => /^image\/gif$/i.test(file.type) || /\.gif$/i.test(file.name));
+    const useNativeGifPreview = containsGifLink || containsGifFile;
     const payload = {
-      ...(ping ? { content: `<@${ctx.topic.ownerId}>` } : {}),
-      embeds: [{ author: { name: String(name).slice(0, 256), icon_url: avatar ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64` : defaultAvatar(id) }, description: text || undefined, color: 0x3b82f6, footer: { text: 'Odpowiedź z panelu' } }],
+      ...((ping || useNativeGifPreview) ? { content: [ping ? `<@${ctx.topic.ownerId}>` : '', useNativeGifPreview ? text : ''].filter(Boolean).join('\n') } : {}),
+      embeds: useNativeGifPreview ? [] : [{ author: { name: String(name).slice(0, 256), icon_url: avatar ? `https://cdn.discordapp.com/avatars/${id}/${avatar}.png?size=64` : defaultAvatar(id) }, description: text || undefined, color: 0x3b82f6, footer: { text: 'Odpowiedź z panelu' } }],
       allowed_mentions: ping ? { users: [ctx.topic.ownerId] } : { parse: [] }
     };
     try {
