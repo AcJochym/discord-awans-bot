@@ -428,8 +428,8 @@
       let animateLists = true;
       let lastDetailId = null;
       let selectedGuildId = null;
-      const guildNameMap = new Map();
       let dashboardUserId = '';
+      const guildNameMap = new Map();
 
       const glider = document.querySelector('.tab-glider');
       function moveGlider() {
@@ -941,7 +941,7 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeProfile(); });
 
       /* --- Tickety w panelu: lista, rozmowa jak na Discordzie, odpowiadanie --- */
-      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, ownSentMessageIds: new Set(), notifiedMessageIds: new Set(), messageRefreshTimer: null, listRefreshTimer: null, atBottom: true };
+      const tk = { guild: '', state: 'open', q: '', tickets: [], listSig: '', current: null, msgs: [], hasOlder: false, canSend: false, files: [], sending: false, actionBusy: false, actionState: null, ownSentMessageIds: new Set(), notifiedMessageIds: new Set(), messageRefreshTimer: null, atBottom: true };
       const tkEl = (id) => document.getElementById(id);
       const tkList = tkEl('tkList');
       const tkMsgs = tkEl('tkMsgs');
@@ -1319,8 +1319,15 @@
           clearTimeout(tk.messageRefreshTimer);
           tk.messageRefreshTimer = setTimeout(() => tkPoll(), 150);
         }
-        clearTimeout(tk.listRefreshTimer);
-        tk.listRefreshTimer = setTimeout(() => loadTickets(), 350);
+        if (message.guildId === tk.guild) {
+          const ticket = tk.tickets.find((entry) => entry.id === message.channelId);
+          if (ticket) {
+            ticket.lastMessageId = message.messageId;
+            ticket.lastMessageAt = message.createdAt;
+            tk.listSig = '';
+            renderTicketList();
+          }
+        }
       }
 
       const ticketEvents = new EventSource('/api/tickets/events');
@@ -1969,7 +1976,7 @@
       loadMe();
       loadTickets();
       loadStaff();
-      setInterval(loadStaff, 60000);
+      setInterval(loadStaff, 5 * 60 * 1000);
       reloadActivity();
       pollPresence();
       setInterval(pollPresence, 5000);
