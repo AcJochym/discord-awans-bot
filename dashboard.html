@@ -350,8 +350,19 @@
     <div id="clearLogsModal" class="modal" hidden>
       <div class="modal-card glass-card confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="clearLogsTitle" aria-describedby="clearLogsDescription">
         <div class="confirm-body">
-          <h2 id="clearLogsTitle">Wyczyścić wszystkie logi?</h2>
-          <p id="clearLogsDescription">Ta operacja usunie historię logów z bazy i pamięci bota. Nie można jej cofnąć.</p>
+          <h2 id="clearLogsTitle">Usunąć logi?</h2>
+          <p id="clearLogsDescription">Wybierz zakres logów do usunięcia.</p>
+          <div id="clearLogsCategory" class="chips clear-logs-options" role="group" aria-label="Zakres usuwania logów">
+            <button type="button" data-v="all" aria-pressed="true">Wszystkie</button>
+            <button type="button" data-v="system" aria-pressed="false">Systemowe</button>
+            <button type="button" data-v="server" aria-pressed="false">Serwerowe</button>
+          </div>
+          <div id="clearLogsGuildGroup" class="clear-logs-guild" hidden>
+            <label class="filter-label" for="clearLogsGuild">Serwer</label>
+            <select id="clearLogsGuild" class="staff-guild" aria-label="Serwer logów">
+              <option value="">Wybierz serwer</option>
+            </select>
+          </div>
           <p id="clearLogsStatus" class="config-message" role="status" aria-live="polite"></p>
           <div class="confirm-actions">
             <button type="button" id="cancelClearLogs" class="ghost-btn">Anuluj</button>
@@ -1766,6 +1777,36 @@
       const clearLogsModal = document.getElementById('clearLogsModal');
       const clearLogsStatus = document.getElementById('clearLogsStatus');
       const confirmClearLogsBtn = document.getElementById('confirmClearLogs');
+      const clearLogsDescription = document.getElementById('clearLogsDescription');
+      const clearLogsGuild = document.getElementById('clearLogsGuild');
+      const clearLogsGuildGroup = document.getElementById('clearLogsGuildGroup');
+      let clearLogsCategory = 'all';
+      function updateClearLogsCategory(category) {
+        clearLogsCategory = category;
+        document.querySelectorAll('#clearLogsCategory button').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button.dataset.v === category));
+        });
+        clearLogsGuildGroup.hidden = category !== 'server';
+        clearLogsDescription.textContent = category === 'all'
+          ? 'Usunie wszystkie logi systemowe i serwerowe. Tej operacji nie można cofnąć.'
+          : category === 'system'
+            ? 'Usunie wszystkie logi systemowe. Logi serwerowe pozostaną bez zmian.'
+            : 'Usunie logi serwerowe wybranego serwera. Pozostałe logi pozostaną bez zmian.';
+        confirmClearLogsBtn.textContent = category === 'all' ? 'Usuń wszystkie' : category === 'system' ? 'Usuń systemowe' : 'Usuń serwerowe';
+        confirmClearLogsBtn.disabled = category === 'server' && !clearLogsGuild.value;
+      }
+
+      async function populateClearLogsGuilds() {
+        if (!guildNameMap.size) {
+          try {
+            const response = await apiFetch('/api/servers');
+            const data = await response.json();
+            if (data.ok) data.guilds.forEach((guild) => guildNameMap.set(guild.id, guild.name));
+          } catch (_) { /* lista pozostaje pusta, jeśli nie uda się pobrać serwerów */ }
+        }
+        clearLogsGuild.replaceChildren(new Option('Wybierz serwer', ''), ...[...guildNameMap].map(([id, name]) => new Option(name, id)));
+      }
+
       function closeClearLogsModal() {
         if (clearLogsModal.hidden) return;
         clearLogsModal.classList.remove('open');
@@ -1773,22 +1814,33 @@
         setTimeout(() => { clearLogsModal.hidden = true; }, 260);
       }
 
-      document.getElementById('clearLogsBtn').addEventListener('click', () => {
+      document.getElementById('clearLogsBtn').addEventListener('click', async () => {
+        await populateClearLogsGuilds();
         clearLogsStatus.textContent = '';
-        confirmClearLogsBtn.disabled = false;
+        clearLogsGuild.value = '';
+        updateClearLogsCategory('all');
         clearLogsModal.hidden = false;
         document.body.classList.add('modal-open');
         requestAnimationFrame(() => clearLogsModal.classList.add('open'));
-        confirmClearLogsBtn.focus();
+        document.querySelector('#clearLogsCategory button[data-v="all"]').focus();
       });
+      document.getElementById('clearLogsCategory').addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-v]');
+        if (button) updateClearLogsCategory(button.dataset.v);
+      });
+      clearLogsGuild.addEventListener('change', () => updateClearLogsCategory(clearLogsCategory));
       document.getElementById('cancelClearLogs').addEventListener('click', closeClearLogsModal);
       clearLogsModal.addEventListener('click', (event) => { if (event.target === clearLogsModal) closeClearLogsModal(); });
       document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeClearLogsModal(); });
       confirmClearLogsBtn.addEventListener('click', async () => {
+        if (clearLogsCategory === 'server' && !clearLogsGuild.value) return;
         confirmClearLogsBtn.disabled = true;
         clearLogsStatus.textContent = 'Usuwanie logów…';
         try {
-          const response = await apiFetch('/api/logs', { method: 'DELETE' });
+          const response = await apiFetch('/api/logs', {
+            method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ category: clearLogsCategory, guildId: clearLogsGuild.value })
+          });
           const data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wyczyścić logów.');
           closeClearLogsModal();
