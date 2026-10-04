@@ -6,6 +6,7 @@
 // Pełny opis konfiguracji: TICKETS.md
 
 import fetch from 'node-fetch';
+import { saveArchivedTicket } from './logStore.js';
 
 const API = 'https://discord.com/api/v10';
 
@@ -684,6 +685,21 @@ async function deleteTicket(ctx, t, type, ticket) {
   const ch = ticket.channel;
   const messages = await fetchAllMessages(ch.id);
 
+  await saveArchivedTicket({
+    id: ch.id,
+    guildId: ctx.guildId,
+    name: ch.name,
+    number: ticket.number,
+    state: ticket.state,
+    typeId: ticket.typeId,
+    typeLabel: type.LABEL,
+    ownerId: ticket.ownerId,
+    createdAt: new Date(snowflakeToMs(ch.id)).toISOString(),
+    lastMessageAt: messages.at(-1)?.timestamp || new Date(snowflakeToMs(ch.last_message_id || ch.id)).toISOString(),
+    permission_overwrites: ch.permission_overwrites || [],
+    deletedBy: ctx.actorId || null
+  }, messages);
+
   // Transkrypt był już zapisany przy zamknięciu. Zapisujemy nowy tylko, gdy po zamknięciu ktoś pisał.
   const last = messages[messages.length - 1];
   const activityAfterClose = !last || !(last.author?.id === ctx.appId && last.embeds?.[0]?.title === CLOSED_TITLE);
@@ -939,7 +955,7 @@ async function handleButton(interaction, guildConfig, t, res) {
     case 'tkt_delete': {
       const allowed = t.DELETE_REQUIRES_ADMIN ? isAdmin(interaction, guildConfig) : staff;
       if (!allowed) return reply(res, t.DELETE_REQUIRES_ADMIN ? '❌ Ticket może usunąć tylko administrator.' : '❌ Tylko obsługa ticketu może go usunąć.');
-      return res.json({ type: 4, data: { content: '🗑️ Na pewno chcesz **trwale usunąć** ten ticket? Transkrypt jest zapisany w logach.', flags: 64, components: [confirmRow('tkt_delete_yes', 'tkt_delete_no')] } });
+      return res.json({ type: 4, data: { content: '🗑️ Na pewno chcesz usunąć ten ticket? Archiwum będzie dostępne w panelu, a transkrypt zgodnie z ustawieniami zostanie wysłany do logów.', flags: 64, components: [confirmRow('tkt_delete_yes', 'tkt_delete_no')] } });
     }
 
     case 'tkt_delete_no':
