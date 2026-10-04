@@ -2,7 +2,7 @@
 import fetch from 'node-fetch';
 
 const API = 'https://discord.com/api/v10';
-const TTL_MS = 60 * 1000;
+const TTL_MS = 5 * 60 * 1000;
 const cache = new Map(); // guildId -> { at, promise }
 
 // Kolejność = priorytet: osoba trafia do NAJWYŻSZEJ grupy, do której ma rolę.
