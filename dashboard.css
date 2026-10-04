@@ -664,6 +664,8 @@ body.modal-open { overflow: hidden; }
 .tk-file { padding: 8px 12px; border-radius: 10px; border: 1px solid var(--edge); background: var(--glass-in); color: #8ecbff; text-decoration: none; }
 .tk-gif-link { display: inline-block; max-width: 100%; vertical-align: top; }
 .tk-gif { display: block; max-width: min(420px, 100%); max-height: 320px; object-fit: contain; border: 1px solid var(--edge); border-radius: 10px; }
+.tk-gif-fallback { display: none; padding: 4px 9px; border: 1px solid var(--edge); border-radius: 8px; color: #8ecbff; font-size: 0.82rem; }
+.tk-gif-link.failed .tk-gif-fallback { display: inline-block; }
 .tk-reacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .tk-reacts span { padding: 1px 8px; border-radius: 8px; border: 1px solid var(--edge); background: var(--glass-in); font-size: 0.82rem; }
 
