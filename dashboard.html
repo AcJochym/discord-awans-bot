@@ -333,6 +333,20 @@
       </div>
     </div>
 
+    <div id="tkConfirmModal" class="modal" hidden>
+      <div class="modal-card glass-card confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="tkConfirmTitle" aria-describedby="tkConfirmDescription">
+        <div class="confirm-body">
+          <h2 id="tkConfirmTitle"></h2>
+          <p id="tkConfirmDescription"></p>
+          <p id="tkConfirmStatus" class="config-message" role="status" aria-live="polite"></p>
+          <div class="confirm-actions">
+            <button type="button" id="cancelTkAction" class="ghost-btn">Anuluj</button>
+            <button type="button" id="confirmTkAction" class="ghost-btn danger-btn">Potwierdź</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="clearLogsModal" class="modal" hidden>
       <div class="modal-card glass-card confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="clearLogsTitle" aria-describedby="clearLogsDescription">
         <div class="confirm-body">
@@ -1125,6 +1139,44 @@
         Object.entries(visible).forEach(([id, show]) => { tkEl(id).hidden = !show; });
       }
 
+      const tkConfirmModal = tkEl('tkConfirmModal');
+      let tkPendingAction = null;
+      function tkCloseActionConfirm() {
+        if (tkConfirmModal.hidden) return;
+        tkConfirmModal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+        setTimeout(() => { tkConfirmModal.hidden = true; }, 260);
+        tkPendingAction = null;
+      }
+
+      function tkOpenActionConfirm(action) {
+        tkPendingAction = action;
+        const deleting = action === 'delete';
+        tkEl('tkConfirmTitle').textContent = deleting ? 'Usunąć ticket?' : 'Zamknąć ticket?';
+        tkEl('tkConfirmDescription').textContent = deleting
+          ? `Kanał ticketu #${tk.current.name} zostanie usunięty. Rozmowa pozostanie w archiwum panelu, a transkrypt zostanie wysłany zgodnie z konfiguracją.`
+          : `Ticket #${tk.current.name} zostanie zamknięty. Możesz później otworzyć go ponownie z panelu.`;
+        tkEl('tkConfirmStatus').textContent = '';
+        const confirmButton = tkEl('confirmTkAction');
+        confirmButton.textContent = deleting ? 'Usuń ticket' : 'Zamknij ticket';
+        confirmButton.className = `ghost-btn ${deleting ? 'danger-btn' : 'config-save'}`;
+        confirmButton.disabled = false;
+        tkConfirmModal.hidden = false;
+        document.body.classList.add('modal-open');
+        requestAnimationFrame(() => tkConfirmModal.classList.add('open'));
+        confirmButton.focus();
+      }
+
+      tkEl('cancelTkAction').addEventListener('click', tkCloseActionConfirm);
+      tkConfirmModal.addEventListener('click', (event) => { if (event.target === tkConfirmModal) tkCloseActionConfirm(); });
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape') tkCloseActionConfirm(); });
+      tkEl('confirmTkAction').addEventListener('click', () => {
+        const action = tkPendingAction;
+        if (!action) return;
+        tkCloseActionConfirm();
+        tkRunAction(action);
+      });
+
       async function openTicket(id) {
         tk.current = { id };
         tk.msgs = [];
@@ -1162,7 +1214,6 @@
       async function tkRunAction(action) {
         const ticketId = tk.current?.id;
         if (!ticketId || tk.actionBusy) return;
-        if (action === 'delete' && !confirm('Usunąć ten ticket? Jego rozmowa zostanie zachowana w archiwum panelu.')) return;
         tk.actionBusy = true;
         tkEl('tkActions').querySelectorAll('button').forEach((button) => { button.disabled = true; });
         try {
@@ -1192,7 +1243,10 @@
       }
 
       [['tkActionClose', 'close'], ['tkActionClaim', 'claim'], ['tkActionUnclaim', 'unclaim'], ['tkActionReopen', 'reopen'], ['tkActionDelete', 'delete']]
-        .forEach(([id, action]) => tkEl(id).addEventListener('click', () => tkRunAction(action)));
+        .forEach(([id, action]) => tkEl(id).addEventListener('click', () => {
+          if (action === 'close' || action === 'delete') tkOpenActionConfirm(action);
+          else tkRunAction(action);
+        }));
 
       async function tkPoll() {
         if (!tk.current?.id || tk.current.archived || !tkEl('ticketsTab').classList.contains('active') || document.hidden || tk.sending) return;
