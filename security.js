@@ -1,93 +1,83 @@
-// Zabezpieczenia HTTP: nagłówki + CSP z nonce, limity zapytań, ochrona przed CSRF, serwowanie stron HTML.
-import crypto from 'node:crypto';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { buildCsp, rateLimit, sameOrigin, serveHtml, errorHandler } from '../security.js';
 
-const baseUrl = () => {
-  const raw = (process.env.DASHBOARD_BASE_URL || '').trim().replace(/^["']+|["']+$/g, '').replace(/\/+$/, '');
-  if (!raw) return '';
-  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+const makeRes = () => {
+  const res = { code: 200, headers: {}, body: null, redirected: null };
+  res.status = (c) => { res.code = c; return res; };
+  res.json = (b) => { res.body = b; return res; };
+  res.send = (b) => { res.body = b; return res; };
+  res.type = () => res;
+  res.setHeader = (k, v) => { res.headers[k] = v; };
+  res.redirect = (u) => { res.redirected = u; };
+  return res;
 };
+const makeReq = (over = {}) => ({ method: 'POST', headers: {}, protocol: 'https', get: () => 'panel.example.com', ip: '1.2.3.4', ...over });
 
-export function securityHeaders(_req, res, next) {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-  res.removeHeader('X-Powered-By');
-  if (baseUrl().startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
-  next();
-}
+test('CSRF: żądanie z obcego źródła jest odrzucane', () => {
+  const res = makeRes();
+  let passed = false;
+  sameOrigin(makeReq({ headers: { origin: 'https://evil.example' } }), res, () => { passed = true; });
+  assert.equal(passed, false);
+  assert.equal(res.code, 403);
+});
 
-export function buildCsp(nonce) {
-  return [
-    "default-src 'self'",
-    `script-src 'nonce-${nonce}'`,
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    'font-src https://fonts.gstatic.com',
-    "img-src 'self' data: https:",
-    'media-src https:',
-    "connect-src 'self'",
-    "frame-ancestors 'none'",
-    "base-uri 'none'",
-    "object-src 'none'",
-    "form-action 'self'"
-  ].join('; ');
-}
+test('CSRF: to samo źródło i zapytania odczytu przechodzą', () => {
+  let ok = 0;
+  sameOrigin(makeReq({ headers: { origin: 'https://panel.example.com' } }), makeRes(), () => { ok += 1; });
+  sameOrigin(makeReq({ method: 'GET', headers: { origin: 'https://evil.example' } }), makeRes(), () => { ok += 1; });
+  assert.equal(ok, 2);
+});
 
-// Serwuje plik HTML, nadając każdemu <script> świeży nonce (bez 'unsafe-inline' dla skryptów)
-export function serveHtml(file) {
-  return (_req, res) => {
-    let html;
-    try { html = fs.readFileSync(file, 'utf8'); } catch { return res.status(500).send('Nie można wczytać strony.'); }
-    const nonce = crypto.randomBytes(16).toString('base64');
-    res.setHeader('Content-Security-Policy', buildCsp(nonce));
-    res.setHeader('Cache-Control', 'no-store');
-    res.type('html').send(html.replace(/<script(?=[\s>])/g, `<script nonce="${nonce}"`));
-  };
-}
+test('CSRF: Sec-Fetch-Site cross-site bez Origin jest odrzucane', () => {
+  const res = makeRes();
+  let passed = false;
+  sameOrigin(makeReq({ headers: { 'sec-fetch-site': 'cross-site' } }), res, () => { passed = true; });
+  assert.equal(passed, false);
+  assert.equal(res.code, 403);
+});
 
-// Limit zapytań w oknie czasowym (w pamięci, na adres IP lub własny klucz)
-export function rateLimit({ windowMs, max, key = (req) => req.ip, message = 'Zbyt wiele żądań. Spróbuj za chwilę.', redirect = null }) {
-  const hits = new Map();
-  setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of hits) if (v.reset <= now) hits.delete(k);
-  }, Math.max(windowMs, 10_000)).unref();
+test('limit zapytań blokuje po przekroczeniu i zwraca Retry-After', () => {
+  const limiter = rateLimit({ windowMs: 60_000, max: 3 });
+  let passed = 0;
+  const res = makeRes();
+  for (let i = 0; i < 5; i += 1) limiter(makeReq({ method: 'GET' }), res, () => { passed += 1; });
+  assert.equal(passed, 3);
+  assert.equal(res.code, 429);
+  assert.ok(Number(res.headers['Retry-After']) > 0);
+});
 
-  return (req, res, next) => {
-    const k = key(req);
-    const now = Date.now();
-    let entry = hits.get(k);
-    if (!entry || entry.reset <= now) { entry = { count: 0, reset: now + windowMs }; hits.set(k, entry); }
-    entry.count += 1;
-    if (entry.count <= max) return next();
-    res.setHeader('Retry-After', String(Math.ceil((entry.reset - now) / 1000)));
-    if (redirect) return res.redirect(redirect);
-    return res.status(429).json({ ok: false, error: message });
-  };
-}
+test('limit zapytań liczy każdy adres IP osobno', () => {
+  const limiter = rateLimit({ windowMs: 60_000, max: 1 });
+  let passed = 0;
+  limiter(makeReq({ ip: '10.0.0.1' }), makeRes(), () => { passed += 1; });
+  limiter(makeReq({ ip: '10.0.0.2' }), makeRes(), () => { passed += 1; });
+  assert.equal(passed, 2);
+});
 
-// Ochrona przed CSRF dla żądań zmieniających dane: źródło musi być tym samym adresem co panel
-export function sameOrigin(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  const deny = () => res.status(403).json({ ok: false, error: 'Niedozwolone źródło żądania.' });
-  const origin = req.headers.origin;
-  if (origin) {
-    const allowed = new Set([`${req.protocol}://${req.get('host')}`]);
-    if (baseUrl()) { try { allowed.add(new URL(baseUrl()).origin); } catch { /* pomijamy */ } }
-    return allowed.has(origin) ? next() : deny();
-  }
-  const site = req.headers['sec-fetch-site'];
-  if (site && !['same-origin', 'none'].includes(site)) return deny();
-  return next();
-}
+test('CSP: skrypty tylko z nonce, bez unsafe-inline, brak osadzania w ramkach', () => {
+  const csp = buildCsp('abc123');
+  assert.match(csp, /script-src 'nonce-abc123'/);
+  assert.doesNotMatch(csp.split(';').find((p) => p.includes('script-src')), /unsafe-inline/);
+  assert.match(csp, /frame-ancestors 'none'/);
+});
 
-// Ostatnia linia obrony: błędy middleware (np. za duży JSON) jako JSON, bez szczegółów technicznych
-export function errorHandler(err, _req, res, next) {
-  if (res.headersSent) return next(err);
-  const status = Number(err.status || err.statusCode) || 500;
-  if (status >= 500) console.error('[http]', err);
-  const message = status === 413 ? 'Zbyt duży ładunek żądania.' : status === 400 ? 'Niepoprawne dane żądania.' : 'Błąd serwera.';
-  res.status(status >= 400 && status < 600 ? status : 500).json({ ok: false, error: message });
-}
+test('serveHtml dodaje nonce do każdego <script> i nagłówek CSP', () => {
+  const file = path.join(os.tmpdir(), `csp-test-${process.pid}.html`);
+  fs.writeFileSync(file, '<html><script>1</script><script src="/a.js"></script></html>');
+  const res = makeRes();
+  serveHtml(file)({}, res);
+  const nonce = /nonce-([^']+)'/.exec(res.headers['Content-Security-Policy'])[1];
+  assert.equal(res.body.split(`nonce="${nonce}"`).length - 1, 2);
+  fs.unlinkSync(file);
+});
+
+test('errorHandler nie zdradza szczegółów technicznych', () => {
+  const res = makeRes();
+  errorHandler(Object.assign(new Error('secret stack info'), { status: 413 }), {}, res, () => {});
+  assert.equal(res.code, 413);
+  assert.doesNotMatch(JSON.stringify(res.body), /secret/);
+});
