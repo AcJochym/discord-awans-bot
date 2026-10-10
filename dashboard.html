@@ -606,14 +606,16 @@
           } else {
             list.innerHTML = data.announcements.map((announcement) => `
               <article class="home-announcement">
-                <div class="home-announcement-meta">
-                  <time datetime="${esc(announcement.createdAt)}">${esc(formatTimestamp(announcement.createdAt))}</time>
-                  <span>OGŁOSZENIE</span>
-                </div>
-                <div class="home-announcement-content">
-                  <h3>${esc(announcement.author)}</h3>
-                  ${announcement.content ? `<p>${esc(announcement.content)}</p>` : ''}
-                  ${announcement.imageUrl ? `<img src="${esc(announcement.imageUrl)}" alt="Załącznik do ogłoszenia" loading="lazy" />` : ''}
+                <img class="home-announcement-avatar" src="${esc(announcement.author.avatarUrl)}" alt="" loading="lazy" />
+                <div class="home-announcement-body">
+                  <div class="home-announcement-head">
+                    <button type="button" class="home-author-button" data-user-id="${esc(announcement.author.id)}">${esc(announcement.author.name)}</button>
+                    ${announcement.author.bot ? '<span class="bot-tag">BOT</span>' : ''}
+                    <time datetime="${esc(announcement.createdAt)}" title="${esc(tkTime(announcement.createdAt))}">${esc(tkAgo(announcement.createdAt))}</time>
+                  </div>
+                  ${announcement.content ? `<div class="tk-text">${renderMd(announcement.content, announcement.mentions)}</div>` : ''}
+                  ${announcement.embeds.map((embed) => renderEmbed(embed, announcement.mentions)).join('')}
+                  ${announcement.attachments.length ? `<div class="tk-atts">${announcement.attachments.map(renderAttachment).join('')}</div>` : ''}
                 </div>
               </article>
             `).join('');
@@ -1006,6 +1008,21 @@
         const group = staffData.groups.find((g) => g.key === row.dataset.group);
         const member = group?.members.find((m) => m.id === row.dataset.id);
         if (member) openProfile(member, group);
+      });
+      document.getElementById('announcementList').addEventListener('click', async (event) => {
+        const author = event.target.closest('.home-author-button');
+        if (!author) return;
+        author.disabled = true;
+        try {
+          const response = await apiFetch(`/api/announcements/profile/${encodeURIComponent(author.dataset.userId)}`);
+          const data = await response.json().catch(() => ({ ok: false }));
+          if (!data.ok) throw new Error();
+          openProfile(data.member, data.group);
+        } catch (_) {
+          showToast({ name: 'Ogłoszenia', text: 'Nie udało się wczytać profilu autora.' });
+        } finally {
+          author.disabled = false;
+        }
       });
       document.getElementById('pfClose').addEventListener('click', closeProfile);
       modal.addEventListener('click', (e) => { if (e.target === modal) closeProfile(); });
