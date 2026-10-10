@@ -276,9 +276,9 @@ const discordClient = new Client({
     GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Channel]
+});
 const ANNOUNCEMENTS_CHANNEL_ID = '1344374410080944168';
 let announcementCache = { expiresAt: 0, updatedAt: null, announcements: [] };
-});
 
 discordClient.once('ready', () => {
   console.log(`🤖 Połączono z Discord Gateway jako ${discordClient.user.tag}`);
