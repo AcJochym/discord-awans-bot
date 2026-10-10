@@ -1,7 +1,6 @@
 // Lista administracji pogrupowana po rangach (rolach) na serwerze Discord.
-import fetch from 'node-fetch';
+import { discordRequest, isId } from './shared.js';
 
-const API = 'https://discord.com/api/v10';
 const TTL_MS = 5 * 60 * 1000;
 const cache = new Map(); // guildId -> { at, promise }
 
@@ -28,7 +27,6 @@ export const DEFAULT_STAFF_ROLES = {
   }
 };
 
-const isId = (v) => /^\d{5,25}$/.test(String(v));
 const ids = (arr) => (Array.isArray(arr) ? arr.map(String).filter(isId) : []);
 
 // Role grup: z "STAFF_ROLES" w konfiguracji serwera, a gdy ich brak — wyprowadzone z konfiguracji ticketów.
@@ -70,15 +68,7 @@ export function ticketAccessRoleIds(cfg = {}, ticket = {}) {
   return ids(type?.SUPPORT_ROLE_IDS);
 }
 
-async function api(pathname) {
-  const res = await fetch(`${API}${pathname}`, { headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` } });
-  if (!res.ok) {
-    const error = new Error(`Discord HTTP ${res.status}`);
-    error.status = res.status;
-    throw error;
-  }
-  return res.json();
-}
+const api = (pathname) => discordRequest('GET', pathname);
 
 async function allMembers(guildId) {
   const out = [];
