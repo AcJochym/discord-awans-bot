@@ -815,6 +815,49 @@ async function userHasDashboardAccess(userId) {
   return false;
 }
 
+const dashboardTabCache = new Map();
+const DASHBOARD_TAB_CACHE_MS = 60_000;
+const ALL_DASHBOARD_TABS = ['home', 'overview', 'servers', 'logs', 'tickets', 'absences'];
+
+async function dashboardTabsFor(userId) {
+  if (BOT_OWNER_ID && userId === BOT_OWNER_ID) return [...ALL_DASHBOARD_TABS, 'config'];
+  const cached = dashboardTabCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.tabs;
+
+  let rank = 0;
+  for (const [guildId, config] of Object.entries(serverConfigs)) {
+    try {
+      const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
+        headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
+      });
+      if (!response.ok) continue;
+      const member = await response.json();
+      const memberRoles = new Set(member.roles || []);
+      const roleGroups = staffRoleIds(config, guildId);
+      const hasAny = (group) => (roleGroups[group] || []).some((roleId) => memberRoles.has(roleId));
+
+      if (hasAny('high_command') || hasAny('command') || hasAny('command_ftd')) {
+        rank = 3;
+        break;
+      }
+      if (hasAny('medium_command')) rank = Math.max(rank, 2);
+      else if (hasAny('ftd')) rank = Math.max(rank, 1);
+    } catch (error) {
+      console.error('Błąd sprawdzania dostępu do zakładek:', error.message);
+    }
+  }
+
+  const tabs = rank === 3
+    ? [...ALL_DASHBOARD_TABS]
+    : rank === 2
+      ? ['home', 'overview', 'servers', 'tickets', 'absences']
+      : rank === 1
+        ? ['home', 'tickets', 'absences']
+        : ['home'];
+  dashboardTabCache.set(userId, { tabs, expiresAt: Date.now() + DASHBOARD_TAB_CACHE_MS });
+  return tabs;
+}
+
 // --- Obecność administratorów i powiadomienia o logowaniu (trzymane w pamięci) ---
 const dashPresence = new Map();
 const dashEvents = [];
@@ -855,6 +898,14 @@ async function requireDashboardAuth(req, res, next) {
   req.dashUser = session;
   touchDashboardPresence(session);
   next();
+}
+
+function requireDashboardTab(tab) {
+  return async (req, res, next) => {
+    const tabs = await dashboardTabsFor(req.dashUser.id);
+    if (!tabs.includes(tab)) return res.status(403).json({ ok: false, error: 'forbidden' });
+    next();
+  };
 }
 
 app.get('/login', (req, res) => {
@@ -940,6 +991,12 @@ function requireBotOwner(req, res, next) {
 
 const USER_STATE_KEYS = new Set(['tkSeen', 'sound']);
 
+app.use('/api/dashboard-summary', requireDashboardAuth, requireDashboardTab('overview'));
+app.use('/api/servers', requireDashboardAuth, requireDashboardTab('servers'));
+app.use('/api/logs', requireDashboardAuth, requireDashboardTab('logs'));
+app.use('/api/tickets', requireDashboardAuth, requireDashboardTab('tickets'));
+app.use('/api/absences', requireDashboardAuth, requireDashboardTab('absences'));
+
 app.get('/api/state', requireDashboardAuth, async (req, res) => {
   res.json({ ok: true, state: await getUserState(req.dashUser.id) });
 });
@@ -956,9 +1013,9 @@ app.put('/api/state', requireDashboardAuth, express.json({ limit: '30kb' }), asy
   res.json({ ok: true, persisted: saved });
 });
 
-app.get('/api/me', requireDashboardAuth, (req, res) => {
+app.get('/api/me', requireDashboardAuth, async (req, res) => {
   const { id, name, avatar } = req.dashUser;
-  res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar), isBotOwner: Boolean(BOT_OWNER_ID && id === BOT_OWNER_ID) });
+  res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar), isBotOwner: Boolean(BOT_OWNER_ID && id === BOT_OWNER_ID), allowedTabs: await dashboardTabsFor(id) });
 });
 
 app.get('/api/announcements', requireDashboardAuth, async (_req, res) => {
