@@ -361,6 +361,8 @@ discordClient.on('messageCreate', async message => {
     response = '**Field Training Division (FTD):**\n• [109] Aiden Walker — Commander, Field Training Division\n• [122] Katrina Sheeran — Under Commander, Field Training Division';
   } else if (words.has('command')) {
     response = '**Command LSPD:**\n• [101] Thomas McKenzie — Commander\n• [102] Thomas Kenley — Commander\n• [103] Johny Asteroid — Commander';
+    } else if (words.has('przepis')) {
+    response = '**🥟 PRZEPIS NA PIEROGI RUSKIE (50-60 szt.)**\n\n**🥣 SKŁADNIKI**\n\n**Ciasto:**\n* **500 g** mąki pszennej\n* **250 ml** bardzo ciepłej wody\n* **1 jajko** (opcjonalnie)\n* **2 łyżki** oleju\n* **Szczypta** soli\n\n**Farsz:**\n* **500 g** ugotowanych ziemniaków\n* **500 g** twarogu półtłustego\n* **2** cebule (pokrojone i zeszklone na maśle)\n* Sól i **duża ilość** pieprzu (ok. 1 łyżeczki)\n\n---\n\n**👨‍🍳 PRZYGOTOWANIE**\n\n**1. Farsz**\nZiemniaki utłucz (muszą być zimne). Twaróg rozgnieć. Wymieszaj z usmażoną cebulą, mocno dopraw solą i pieprzem.\n\n**2. Ciasto**\nDo mąki dodaj sól, olej i jajko. Dolewaj ciepłą wodę, wyrabiając dłońmi ok. 10 minut na gładkie, elastyczne ciasto.\n\n**3. Odpoczynek**\nPrzykryj ciasto folią lub ściereczką na 30 minut.\n\n**4. Lepienie**\nPodziel ciasto, wałkuj cienko na podsypanym blacie. Wycinaj kółka, nakładaj farsz i dokładnie zlepiaj brzegi.\n\n**5. Gotowanie**\nWrzucaj partiami na osolony wrzątek z odrobiną oleju. Gotuj ok. 2-3 minuty od momentu wypłynięcia. Smacznego! 🍽️';
   } else if (words.has('kompendium') || words.has('handbook')) {
     response = `**Kompendium LSPD:** ${LSPD_RESOURCES.handbook}`;
   } else if (words.has('regulamin') || words.has('rules')) {
@@ -374,7 +376,7 @@ discordClient.on('messageCreate', async message => {
   } else if (words.has('hej')) {
     response = 'Cześć! Jestem tutaj. W czym mogę pomóc?';
   } else {
-    response = 'Nie wiem, o co chodzi. Zapytaj o `Command`, `High Command`, `FTD`, `kompendium`, `regulamin`, `database`, `urlop` lub `ticket`.';
+    response = 'Nie wiem, o co chodzi. Zapytaj o `Command`, `High Command`, `FTD`, `kompendium`, `regulamin`, `database`, `urlop`, `przepis` lub `ticket`.';
   }
 
   try {
