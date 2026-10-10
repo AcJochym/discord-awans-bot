@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
-import { fetch } from './shared.js';
+import { discordRequest, fetch, isId, snowTime } from './shared.js';
 import { securityHeaders, serveHtml, rateLimit, sameOrigin, errorHandler } from './security.js';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
@@ -279,6 +279,15 @@ const discordClient = new Client({
 });
 const ANNOUNCEMENTS_CHANNEL_ID = '1344374410080944168';
 let announcementCache = { expiresAt: 0, updatedAt: null, announcements: [] };
+
+function discordHttpsUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 discordClient.once('ready', () => {
   console.log(`🤖 Połączono z Discord Gateway jako ${discordClient.user.tag}`);
@@ -965,40 +974,109 @@ app.get('/api/announcements', requireDashboardAuth, async (_req, res) => {
     }
 
     const messages = await channel.messages.fetch({ limit: 10 });
-    const announcements = [...messages.values()].map((message) => {
-      const embed = message.embeds.find((item) => item.title || item.description);
-      const content = [message.cleanContent || message.content, embed?.title, embed?.description]
-        .filter(Boolean)
-        .join('\n\n')
-        .trim();
-      const attachment = message.attachments.find((item) => item.contentType?.startsWith('image/'));
-      const candidateImage = attachment?.url || embed?.image?.url || embed?.thumbnail?.url;
-      let imageUrl = null;
-      try {
-        const parsedImage = new URL(candidateImage);
-        if (parsedImage.protocol === 'https:' && ['cdn.discordapp.com', 'media.discordapp.net'].includes(parsedImage.hostname)) {
-          imageUrl = parsedImage.toString();
-        }
-      } catch {}
-
-      return {
-        author: message.member?.displayName || message.author?.globalName || message.author?.username || 'Law Enforcement',
-        content,
-        createdAt: message.createdAt.toISOString(),
-        imageUrl
-      };
-    }).filter((item) => item.content || item.imageUrl)
+    const announcements = [...messages.values()].map((message) => ({
+      author: {
+        id: message.author.id,
+        name: message.member?.displayName || message.author?.globalName || message.author?.username || 'Law Enforcement',
+        avatarUrl: message.member?.displayAvatarURL({ extension: 'png', size: 64 }) || message.author.displayAvatarURL({ extension: 'png', size: 64 }),
+        bot: Boolean(message.author.bot)
+      },
+      content: message.content || '',
+      createdAt: message.createdAt.toISOString(),
+      mentions: {
+        users: Object.fromEntries([...message.mentions.users.values()].map((user) => [user.id, user.globalName || user.username])),
+        roles: Object.fromEntries([...message.mentions.roles.values()].map((role) => [role.id, role.name])),
+        channels: Object.fromEntries([...message.mentions.channels.values()].map((mentionedChannel) => [mentionedChannel.id, mentionedChannel.name]))
+      },
+      embeds: message.embeds.map((embed) => ({
+        author: embed.author ? { name: embed.author.name, icon: discordHttpsUrl(embed.author.iconURL) } : null,
+        title: embed.title,
+        url: discordHttpsUrl(embed.url),
+        description: embed.description,
+        fields: embed.fields.map((field) => ({ name: field.name, value: field.value, inline: field.inline })),
+        color: embed.color ? `#${embed.color.toString(16).padStart(6, '0')}` : null,
+        image: discordHttpsUrl(embed.image?.url),
+        thumbnail: discordHttpsUrl(embed.thumbnail?.url),
+        video: discordHttpsUrl(embed.video?.url),
+        type: embed.data?.type,
+        footer: embed.footer?.text,
+        timestamp: embed.timestamp
+      })),
+      attachments: [...message.attachments.values()].map((attachment) => ({
+        name: attachment.name,
+        size: attachment.size,
+        type: attachment.contentType || '',
+        url: discordHttpsUrl(attachment.url),
+        proxyUrl: discordHttpsUrl(attachment.proxyURL)
+      }))
+    })).filter((item) => item.content || item.embeds.length || item.attachments.length)
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
     announcementCache = {
       expiresAt: Date.now() + 60_000,
       updatedAt: new Date().toISOString(),
+      guildId: channel.guildId,
       announcements
     };
     return res.json({ ok: true, announcements, updatedAt: announcementCache.updatedAt });
   } catch (error) {
     console.error('Błąd pobierania ogłoszeń Discord:', error.message);
     return res.status(503).json({ ok: false, error: 'announcements_unavailable' });
+  }
+});
+
+app.get('/api/announcements/profile/:userId', requireDashboardAuth, async (req, res) => {
+  const userId = String(req.params.userId || '');
+  const guildId = announcementCache.guildId;
+  if (!isId(userId) || !guildId || !announcementCache.announcements.some((item) => item.author.id === userId)) {
+    return res.status(404).json({ ok: false, error: 'Nie znaleziono profilu użytkownika.' });
+  }
+
+  try {
+    const [member, roles] = await Promise.all([
+      discordRequest('GET', `/guilds/${guildId}/members/${userId}`).catch((error) => error.status === 404 ? null : Promise.reject(error)),
+      discordRequest('GET', `/guilds/${guildId}/roles`)
+    ]);
+    const user = member?.user || await discordRequest('GET', `/users/${userId}`).catch((error) => error.status === 404 ? null : Promise.reject(error));
+    if (!user) return res.status(404).json({ ok: false, error: 'Nie znaleziono profilu użytkownika.' });
+
+    const roleIds = member?.roles || [];
+    const roleMap = new Map(roles.map((role) => [role.id, role]));
+    const groups = staffRoleIds(serverConfigs[guildId] || {}, guildId);
+    const staffRoleIdSet = new Set(Object.values(groups).flat());
+    const profileRoles = roleIds.map((id) => roleMap.get(id)).filter(Boolean).sort((a, b) => b.position - a.position)
+      .map((role) => ({
+        id: role.id,
+        name: role.name,
+        color: role.color ? `#${role.color.toString(16).padStart(6, '0')}` : null,
+        staff: staffRoleIdSet.has(role.id)
+      }));
+    const group = STAFF_GROUPS.find((candidate) => groups[candidate.key]?.some((id) => roleIds.includes(id)))
+      || { key: 'member', label: 'Użytkownik' };
+    const avatarUrl = member?.avatar
+      ? `https://cdn.discordapp.com/guilds/${guildId}/users/${userId}/avatars/${member.avatar}.png?size=128`
+      : dashAvatarUrl(userId, user.avatar || null);
+
+    return res.json({
+      ok: true,
+      member: {
+        id: userId,
+        name: member?.nick || user.global_name || user.username,
+        username: user.username,
+        nick: member?.nick || null,
+        avatarUrl,
+        bot: Boolean(user.bot),
+        verifiedApplication: Boolean(user.bot && (user.id === process.env.DISCORD_APPLICATION_ID || (Number(user.public_flags || user.flags || 0) & 0x10000) !== 0)),
+        color: profileRoles.find((role) => role.color)?.color || null,
+        roles: profileRoles,
+        joinedAt: member?.joined_at || null,
+        createdAt: new Date(snowTime(userId)).toISOString()
+      },
+      group
+    });
+  } catch (error) {
+    console.error('Błąd pobierania profilu autora ogłoszenia:', error.message);
+    return res.status(502).json({ ok: false, error: 'Nie udało się wczytać profilu użytkownika.' });
   }
 });
 
