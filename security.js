@@ -1,83 +1,86 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { buildCsp, rateLimit, sameOrigin, serveHtml, errorHandler } from '../security.js';
 
-const makeRes = () => {
-  const res = { code: 200, headers: {}, body: null, redirected: null };
-  res.status = (c) => { res.code = c; return res; };
-  res.json = (b) => { res.body = b; return res; };
-  res.send = (b) => { res.body = b; return res; };
-  res.type = () => res;
-  res.setHeader = (k, v) => { res.headers[k] = v; };
-  res.redirect = (u) => { res.redirected = u; };
-  return res;
-};
-const makeReq = (over = {}) => ({ method: 'POST', headers: {}, protocol: 'https', get: () => 'panel.example.com', ip: '1.2.3.4', ...over });
+const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-test('CSRF: żądanie z obcego źródła jest odrzucane', () => {
-  const res = makeRes();
-  let passed = false;
-  sameOrigin(makeReq({ headers: { origin: 'https://evil.example' } }), res, () => { passed = true; });
-  assert.equal(passed, false);
-  assert.equal(res.code, 403);
-});
+export function buildCsp(nonce) {
+  return [
+    "default-src 'self'",
+    `script-src 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://discord.com https://cdn.discordapp.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; ');
+}
 
-test('CSRF: to samo źródło i zapytania odczytu przechodzą', () => {
-  let ok = 0;
-  sameOrigin(makeReq({ headers: { origin: 'https://panel.example.com' } }), makeRes(), () => { ok += 1; });
-  sameOrigin(makeReq({ method: 'GET', headers: { origin: 'https://evil.example' } }), makeRes(), () => { ok += 1; });
-  assert.equal(ok, 2);
-});
+export function securityHeaders(req, res, next) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+}
 
-test('CSRF: Sec-Fetch-Site cross-site bez Origin jest odrzucane', () => {
-  const res = makeRes();
-  let passed = false;
-  sameOrigin(makeReq({ headers: { 'sec-fetch-site': 'cross-site' } }), res, () => { passed = true; });
-  assert.equal(passed, false);
-  assert.equal(res.code, 403);
-});
+export function serveHtml(filePath) {
+  return (req, res) => {
+    const nonce = crypto.randomBytes(18).toString('base64');
+    const html = fs.readFileSync(filePath, 'utf8').replace(/<script\b([^>]*)>/gi, (tag, attributes) => {
+      if (/\bnonce\s*=/.test(attributes)) return tag;
+      return `<script nonce="${nonce}"${attributes}>`;
+    });
+    res.setHeader('Content-Security-Policy', buildCsp(nonce));
+    res.type('html').send(html);
+  };
+}
 
-test('limit zapytań blokuje po przekroczeniu i zwraca Retry-After', () => {
-  const limiter = rateLimit({ windowMs: 60_000, max: 3 });
-  let passed = 0;
-  const res = makeRes();
-  for (let i = 0; i < 5; i += 1) limiter(makeReq({ method: 'GET' }), res, () => { passed += 1; });
-  assert.equal(passed, 3);
-  assert.equal(res.code, 429);
-  assert.ok(Number(res.headers['Retry-After']) > 0);
-});
+export function rateLimit({ windowMs, max, redirect } = {}) {
+  const requests = new Map();
 
-test('limit zapytań liczy każdy adres IP osobno', () => {
-  const limiter = rateLimit({ windowMs: 60_000, max: 1 });
-  let passed = 0;
-  limiter(makeReq({ ip: '10.0.0.1' }), makeRes(), () => { passed += 1; });
-  limiter(makeReq({ ip: '10.0.0.2' }), makeRes(), () => { passed += 1; });
-  assert.equal(passed, 2);
-});
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip || req.socket?.remoteAddress || 'unknown';
+    let entry = requests.get(key);
+    if (!entry || now >= entry.resetAt) {
+      entry = { count: 0, resetAt: now + windowMs };
+      requests.set(key, entry);
+    }
 
-test('CSP: skrypty tylko z nonce, bez unsafe-inline, brak osadzania w ramkach', () => {
-  const csp = buildCsp('abc123');
-  assert.match(csp, /script-src 'nonce-abc123'/);
-  assert.doesNotMatch(csp.split(';').find((p) => p.includes('script-src')), /unsafe-inline/);
-  assert.match(csp, /frame-ancestors 'none'/);
-});
+    entry.count += 1;
+    if (entry.count <= max) return next();
 
-test('serveHtml dodaje nonce do każdego <script> i nagłówek CSP', () => {
-  const file = path.join(os.tmpdir(), `csp-test-${process.pid}.html`);
-  fs.writeFileSync(file, '<html><script>1</script><script src="/a.js"></script></html>');
-  const res = makeRes();
-  serveHtml(file)({}, res);
-  const nonce = /nonce-([^']+)'/.exec(res.headers['Content-Security-Policy'])[1];
-  assert.equal(res.body.split(`nonce="${nonce}"`).length - 1, 2);
-  fs.unlinkSync(file);
-});
+    res.setHeader('Retry-After', String(Math.max(1, Math.ceil((entry.resetAt - now) / 1000))));
+    if (redirect) return res.redirect(redirect);
+    return res.status(429).json({ error: 'Zbyt wiele żądań. Spróbuj ponownie później.' });
+  };
+}
 
-test('errorHandler nie zdradza szczegółów technicznych', () => {
-  const res = makeRes();
-  errorHandler(Object.assign(new Error('secret stack info'), { status: 413 }), {}, res, () => {});
-  assert.equal(res.code, 413);
-  assert.doesNotMatch(JSON.stringify(res.body), /secret/);
-});
+export function sameOrigin(req, res, next) {
+  if (safeMethods.has(req.method)) return next();
+  const fetchSite = req.headers?.['sec-fetch-site'] ?? req.get('sec-fetch-site');
+  if (fetchSite === 'cross-site') {
+    return res.status(403).json({ error: 'Żądanie z niedozwolonego źródła.' });
+  }
+
+  const origin = req.headers?.origin ?? req.get('origin');
+  if (!origin) return next();
+
+  let requestOrigin;
+  try {
+    requestOrigin = new URL(`${req.protocol}://${req.get('host')}`).origin;
+    if (new URL(origin).origin === requestOrigin) return next();
+  } catch {}
+
+  return res.status(403).json({ error: 'Żądanie z niedozwolonego źródła.' });
+}
+
+export function errorHandler(error, req, res, next) {
+  if (res.headersSent) return next(error);
+  const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
+  if (status >= 500) console.error('Błąd obsługi żądania:', error);
+  return res.status(status).json({ error: status >= 500 ? 'Wystąpił błąd serwera.' : 'Nieprawidłowe żądanie.' });
+}
