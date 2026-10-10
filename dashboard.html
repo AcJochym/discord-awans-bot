@@ -53,11 +53,11 @@
       <nav class="tabs" aria-label="Zakładki dashboardu">
         <span class="tab-glider" aria-hidden="true"></span>
         <button class="tab active" data-tab="home">Główna</button>
-        <button class="tab" data-tab="overview">Status</button>
-        <button class="tab" data-tab="servers">Serwery</button>
-        <button class="tab" data-tab="logs">Logi</button>
-        <button class="tab" data-tab="tickets">Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
-        <button class="tab" data-tab="absences">Urlopy i zawieszenia</button>
+        <button class="tab" data-tab="overview" hidden>Status</button>
+        <button class="tab" data-tab="servers" hidden>Serwery</button>
+        <button class="tab" data-tab="logs" hidden>Logi</button>
+        <button class="tab" data-tab="tickets" hidden>Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
+        <button class="tab" data-tab="absences" hidden>Urlopy i zawieszenia</button>
         <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
@@ -446,6 +446,8 @@
       const serverActivityText = document.getElementById('serverActivityText');
       const tabButtons = document.querySelectorAll('.tab');
       const tabPanels = document.querySelectorAll('.tab-panel');
+      let allowedTabs = new Set(['home']);
+      let dashboardAccessReady = false;
       document.addEventListener('pointermove', (event) => {
         const el = event.target.closest('.glass-card, .guild-item, .tab, .mini-stat, .log-item');
         if (!el) return;
@@ -488,6 +490,7 @@
       }
 
       function setActiveTab(tabName) {
+        if (!allowedTabs.has(tabName)) return;
         document.body.classList.toggle('home-view', tabName === 'home');
         tabButtons.forEach((button) => {
           button.classList.toggle('active', button.dataset.tab === tabName);
@@ -636,12 +639,16 @@
           const data = await (await apiFetch('/api/me')).json();
           if (!data.ok) return;
           dashboardUserId = data.id;
+          allowedTabs = new Set(Array.isArray(data.allowedTabs) ? data.allowedTabs : ['home']);
+          allowedTabs.add('home');
+          tabButtons.forEach((button) => { button.hidden = !allowedTabs.has(button.dataset.tab); });
           document.getElementById('configTabButton').hidden = !data.isBotOwner;
           document.getElementById('clearLogsBtn').hidden = !data.isBotOwner;
           document.getElementById('userAvatar').src = data.avatarUrl;
           document.getElementById('userName').textContent = data.name;
           document.getElementById('userChip').hidden = false;
         } catch (_) { /* przekierowanie obsłuży apiFetch */ }
+        finally { dashboardAccessReady = true; moveGlider(); }
       }
 
       document.getElementById('logoutBtn').addEventListener('click', async () => {
@@ -2079,9 +2086,15 @@
       }
 
       async function refreshDashboard() {
-        await Promise.all([loadSummary(), loadServers()]);
-        populateGuildSelect();
-        refreshActivityIfIdle();
+        if (!dashboardAccessReady) return;
+        const tasks = [];
+        if (allowedTabs.has('overview')) tasks.push(loadSummary());
+        if (allowedTabs.has('servers')) tasks.push(loadServers());
+        await Promise.all(tasks);
+        if (allowedTabs.has('logs')) {
+          populateGuildSelect();
+          refreshActivityIfIdle();
+        }
       }
 
       async function saveUserState(key, value) {
@@ -2106,15 +2119,17 @@
 
       setActiveTab('home');
       loadUserState();
-      loadMe();
-      loadTickets();
       loadStaff();
       setInterval(loadStaff, 5 * 60 * 1000);
-      reloadActivity();
       pollPresence();
       let hiddenTicks = 0;
       setInterval(() => { if (!document.hidden || ++hiddenTicks % 3 === 0) pollPresence(); }, 15000);
-      refreshDashboard().then(() => { animateLists = false; });
+      loadMe().then(async () => {
+        if (allowedTabs.has('tickets')) loadTickets();
+        if (allowedTabs.has('logs')) reloadActivity();
+        await refreshDashboard();
+        animateLists = false;
+      });
       setInterval(() => { if (!document.hidden) refreshDashboard(); }, 15000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollPresence(); refreshDashboard(); } });
     </script>
