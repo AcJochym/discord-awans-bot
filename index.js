@@ -276,6 +276,8 @@ const discordClient = new Client({
     GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Channel]
+const ANNOUNCEMENTS_CHANNEL_ID = '1344374410080944168';
+let announcementCache = { expiresAt: 0, updatedAt: null, announcements: [] };
 });
 
 discordClient.once('ready', () => {
@@ -948,6 +950,56 @@ app.put('/api/state', requireDashboardAuth, express.json({ limit: '30kb' }), asy
 app.get('/api/me', requireDashboardAuth, (req, res) => {
   const { id, name, avatar } = req.dashUser;
   res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar), isBotOwner: Boolean(BOT_OWNER_ID && id === BOT_OWNER_ID) });
+});
+
+app.get('/api/announcements', requireDashboardAuth, async (_req, res) => {
+  if (announcementCache.expiresAt > Date.now()) {
+    return res.json({ ok: true, announcements: announcementCache.announcements, updatedAt: announcementCache.updatedAt });
+  }
+  if (!discordClient.isReady()) return res.status(503).json({ ok: false, error: 'announcements_unavailable' });
+
+  try {
+    const channel = await discordClient.channels.fetch(ANNOUNCEMENTS_CHANNEL_ID);
+    if (!channel?.isTextBased() || !channel.messages?.fetch) {
+      return res.status(503).json({ ok: false, error: 'announcements_unavailable' });
+    }
+
+    const messages = await channel.messages.fetch({ limit: 10 });
+    const announcements = [...messages.values()].map((message) => {
+      const embed = message.embeds.find((item) => item.title || item.description);
+      const content = [message.cleanContent || message.content, embed?.title, embed?.description]
+        .filter(Boolean)
+        .join('\n\n')
+        .trim();
+      const attachment = message.attachments.find((item) => item.contentType?.startsWith('image/'));
+      const candidateImage = attachment?.url || embed?.image?.url || embed?.thumbnail?.url;
+      let imageUrl = null;
+      try {
+        const parsedImage = new URL(candidateImage);
+        if (parsedImage.protocol === 'https:' && ['cdn.discordapp.com', 'media.discordapp.net'].includes(parsedImage.hostname)) {
+          imageUrl = parsedImage.toString();
+        }
+      } catch {}
+
+      return {
+        author: message.member?.displayName || message.author?.globalName || message.author?.username || 'Law Enforcement',
+        content,
+        createdAt: message.createdAt.toISOString(),
+        imageUrl
+      };
+    }).filter((item) => item.content || item.imageUrl)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+    announcementCache = {
+      expiresAt: Date.now() + 60_000,
+      updatedAt: new Date().toISOString(),
+      announcements
+    };
+    return res.json({ ok: true, announcements, updatedAt: announcementCache.updatedAt });
+  } catch (error) {
+    console.error('Błąd pobierania ogłoszeń Discord:', error.message);
+    return res.status(503).json({ ok: false, error: 'announcements_unavailable' });
+  }
 });
 
 app.get('/api/presence', requireDashboardAuth, (req, res) => {
