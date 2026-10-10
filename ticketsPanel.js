@@ -1,6 +1,6 @@
 // Panel ticketów: lista, podgląd całej rozmowy i odpowiadanie z poziomu strony.
 // Dostęp odwzorowuje Discorda — widzisz tylko kanały, które widziałbyś na serwerze (uprawnienia ról i nadpisania kanału).
-import fetch from 'node-fetch';
+import { discordRequest as api, fetch, isId, snowTime, publicError } from './shared.js';
 import { getArchivedTicket, listArchivedTickets } from './logStore.js';
 import { STAFF_GROUPS, staffRoleIds, ticketAccessRoleIds } from './staff.js';
 import { getTicketPanelClaim, performPanelTicketAction } from './tickets.js';
@@ -15,9 +15,6 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const BLOCKED_EXT = /\.(exe|bat|cmd|com|scr|msi|vbs|ps1|jar|js|lnk|dll)$/i;
 const ticketEventClients = new Set();
 
-const isId = (v) => /^\d{5,25}$/.test(String(v));
-const snowTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hexColor = (n) => (n ? `#${Number(n).toString(16).padStart(6, '0')}` : null);
 const safeUrl = (u) => (typeof u === 'string' && /^https:\/\//i.test(u) && u.length < 2000 ? u : null);
 const isVerifiedApplicationBot = (user) => Boolean(user?.bot && (
@@ -33,28 +30,6 @@ function memo(key, ttl, fn) {
   caches.set(key, { at: Date.now(), p });
   p.catch(() => { if (caches.get(key)?.p === p) caches.delete(key); });
   return p;
-}
-
-async function api(method, pathname, body) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const res = await fetch(`${API}${pathname}`, {
-      method,
-      headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-      body: body ? JSON.stringify(body) : undefined
-    });
-    if (res.status === 429 && attempt < 2) {
-      const info = await res.json().catch(() => ({}));
-      await sleep(Math.min(info.retry_after || 1, 5) * 1000);
-      continue;
-    }
-    if (!res.ok) {
-      const error = new Error(`Discord HTTP ${res.status}`);
-      error.status = res.status;
-      throw error;
-    }
-    return res.status === 204 ? null : res.json();
-  }
-  return null;
 }
 
 async function mapLimit(items, limit, fn) {
@@ -117,6 +92,28 @@ export async function broadcastTicketGatewayMessage(message) {
       if (check(accessChannel, parseTopic(channel)).view) client.res.write(encoded);
     } catch (error) {
       console.error('[SSE tickety] Nie udało się sprawdzić uprawnień:', error.message);
+    }
+  }));
+}
+
+// Sygnał „coś się zmieniło w tickecie" (nowy kanał, zmiana stanu, usunięcie, edycja wiadomości) — bez treści, tylko ID
+export async function broadcastTicketGatewayChannel(channel, kind) {
+  const guildId = String(channel?.guildId || '');
+  if (!guildId || !channel?.topic?.startsWith('ticket|') || !ticketEventClients.size) return;
+  const accessChannel = {
+    guild_id: guildId,
+    permission_overwrites: [...(channel.permissionOverwrites?.cache?.values() || [])].map((o) => ({
+      id: o.id, type: o.type === 1 || o.type === 'member' ? 1 : 0, allow: String(o.allow?.bitfield ?? o.allow ?? 0), deny: String(o.deny?.bitfield ?? o.deny ?? 0)
+    }))
+  };
+  const encoded = `event: ticket-update\ndata: ${JSON.stringify({ guildId, channelId: channel.id, kind })}\n\n`;
+  await Promise.all([...ticketEventClients].map(async (client) => {
+    if (client.res.writableEnded || client.res.destroyed) { ticketEventClients.delete(client); return; }
+    try {
+      const check = await client.accessChecker(guildId);
+      if (check(accessChannel, parseTopic(channel)).view) client.res.write(encoded);
+    } catch (error) {
+      console.error('[SSE tickety] aktualizacja:', error.message);
     }
   }));
 }
@@ -246,10 +243,15 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
   const pickGuild = (requested) => (serverConfigs[requested] ? requested : serverConfigs[DEFAULT_GUILD] ? DEFAULT_GUILD : Object.keys(serverConfigs)[0]);
 
   app.get('/api/tickets/events', requireDashboardAuth, (req, res) => {
+    const userId = req.dashUser.id;
+    if ([...ticketEventClients].filter((c) => c.userId === userId).length >= 5) {
+      res.status(429).json({ ok: false, error: 'Za dużo otwartych kart panelu.' });
+      return;
+    }
     res.status(200);
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
-    const client = { res, accessChecker };
+    const client = { res, userId, accessChecker: (guildId) => accessChecker(req.dashUser, guildId) };
     ticketEventClients.add(client);
     res.write(': connected\n\n');
     const heartbeat = setInterval(() => {
@@ -539,7 +541,7 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
       res.json({ ok: true, ...result });
     } catch (error) {
       console.error('[panel tickety] akcja:', error.message);
-      res.status(400).json({ ok: false, error: error.message || 'Nie udało się wykonać akcji.' });
+      res.status(400).json({ ok: false, error: publicError(error, 'Nie udało się wykonać akcji.') });
     }
   });
 
@@ -584,7 +586,7 @@ export function registerTicketRoutes(app, { requireDashboardAuth, serverConfigs,
         const form = new FormData();
         form.append('payload_json', JSON.stringify({ ...payload, attachments: files.map((f, i) => ({ id: i, filename: f.name })) }));
         files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.buffer], { type: f.type }), f.name));
-        const r = await globalThis.fetch(`${API}/channels/${ctx.channel.id}/messages`, { method: 'POST', headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }, body: form });
+        const r = await fetch(`${API}/channels/${ctx.channel.id}/messages`, { method: 'POST', timeout: 60000, headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }, body: form });
         if (!r.ok) throw Object.assign(new Error(`Discord HTTP ${r.status}`), { status: r.status });
         sentMessage = await r.json().catch(() => null);
       } else {
