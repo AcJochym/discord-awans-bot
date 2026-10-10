@@ -13,8 +13,8 @@
   <body class="login-body">
     <main class="login-card glass-card">
       <div class="login-banner">
-        <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" onerror="this.remove()" />
-        <img class="brand-logo" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" alt="Law Enforcement" onerror="this.remove()" />
+        <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" data-hide-on-error />
+        <img class="brand-logo" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" alt="Law Enforcement" data-hide-on-error />
       </div>
       <div class="login-content">
         <h1>Panel administracyjny</h1>
@@ -25,6 +25,11 @@
       </div>
     </main>
     <script>
+      document.querySelectorAll('img[data-hide-on-error]').forEach((img) => {
+        const hide = () => img.remove();
+        img.addEventListener('error', hide);
+        if (img.complete && img.naturalWidth === 0) hide();
+      });
       const messages = {
         brak_roli: ['error', 'Nie masz wymaganej roli na serwerze Discord, więc nie możesz wejść do panelu.'],
         config: ['error', 'Logowanie nie jest jeszcze skonfigurowane. Skontaktuj się z administratorem bota.'],
