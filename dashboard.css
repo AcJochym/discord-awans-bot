@@ -614,7 +614,54 @@ body.modal-open { overflow: hidden; }
 .tk-list-head select[hidden] { display: none; }
 .tk-list-head option { background: #14213a; }
 .tk-list-head input:focus-visible, .tk-list-head select:focus-visible, .tk-compose-row textarea:focus-visible { outline: none; border-color: rgba(190, 228, 255, 0.8); box-shadow: 0 0 0 3px rgba(124, 196, 255, 0.25); }
-.tk-list-head .chips { align-self: flex-start; }
+.tk-list-head #tkState {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-self: stretch;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.tk-list-head #tkState button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--muted);
+  text-align: left;
+  white-space: nowrap;
+  font: 500 0.82rem var(--body);
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.tk-list-head #tkState button::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.72;
+}
+.tk-list-head #tkState [data-v="open"] { --state-color: var(--green); }
+.tk-list-head #tkState [data-v="closed"] { --state-color: var(--amber); }
+.tk-list-head #tkState [data-v="all"] { --state-color: var(--blue); }
+.tk-list-head #tkState [data-v="deleted"] { --state-color: var(--red); }
+.tk-list-head #tkState button:hover { border-color: color-mix(in srgb, var(--state-color, var(--blue)) 55%, transparent); color: var(--text); }
+.tk-list-head #tkState button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--state-color) 52%, transparent);
+  background: color-mix(in srgb, var(--state-color) 15%, rgba(10, 17, 32, 0.82));
+  color: var(--state-color);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.tk-list-head #tkState button[aria-pressed="true"]::before { opacity: 1; box-shadow: 0 0 9px var(--state-color); }
+.tk-list-head #tkState button:focus-visible { outline: 2px solid var(--state-color, var(--blue)); outline-offset: 2px; }
 .tk-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent; }
 .tk-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: 14px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 0.2s, transform 0.2s cubic-bezier(.2, .8, .2, 1); }
 .tk-item:hover { background: rgba(255, 255, 255, 0.1); transform: translateX(3px); }
