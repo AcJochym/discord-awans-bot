@@ -5,7 +5,7 @@
 // Uruchomienie:
 //   DISCORD_BOT_TOKEN=... DISCORD_APPLICATION_ID=... SERVER_CONFIGS_JSON='{...}' node register-ticket-commands.js
 
-import fetch from 'node-fetch';
+import { fetch } from './shared.js';
 
 const APP_ID = process.env.DISCORD_APPLICATION_ID;
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
