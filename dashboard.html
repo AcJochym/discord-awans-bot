@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/dashboard.css" />
   </head>
-  <body>
+  <body class="home-view">
     <div class="dashboard-shell">
       <header class="topbar hero">
         <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" data-hide-on-error />
@@ -52,7 +52,8 @@
       <div class="main-col">
       <nav class="tabs" aria-label="Zakładki dashboardu">
         <span class="tab-glider" aria-hidden="true"></span>
-        <button class="tab active" data-tab="overview">Status</button>
+        <button class="tab active" data-tab="home">Główna</button>
+        <button class="tab" data-tab="overview">Status</button>
         <button class="tab" data-tab="servers">Serwery</button>
         <button class="tab" data-tab="logs">Logi</button>
         <button class="tab" data-tab="tickets">Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
@@ -60,7 +61,32 @@
         <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
-      <main id="overviewTab" class="tab-panel active">
+      <section id="homeTab" class="tab-panel active">
+        <section class="home-intro" aria-labelledby="homeTitle">
+          <img class="home-intro-image" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" data-hide-on-error />
+          <div class="home-intro-copy">
+            <span class="home-kicker">LAW ENFORCEMENT</span>
+            <h2 id="homeTitle">Witaj w centrum informacji</h2>
+            <p>Najważniejsze komunikaty i ogłoszenia dla członków zespołu.</p>
+          </div>
+          <span class="home-monogram" aria-hidden="true">LE</span>
+        </section>
+
+        <section class="home-announcements" aria-labelledby="announcementsTitle">
+          <div class="home-section-heading">
+            <div>
+              <span class="home-kicker">NAJNOWSZE INFORMACJE</span>
+              <h2 id="announcementsTitle">Ogłoszenia</h2>
+            </div>
+            <time id="announcementUpdatedAt" class="muted"></time>
+          </div>
+          <div id="announcementList" class="home-announcement-list" aria-live="polite" aria-busy="true">
+            <p class="home-announcement-state">Pobieranie ogłoszeń…</p>
+          </div>
+        </section>
+      </section>
+
+      <main id="overviewTab" class="tab-panel">
         <div class="status-grid">
           <section class="glass-card card-wide">
             <div class="card-header-row">
@@ -462,6 +488,7 @@
       }
 
       function setActiveTab(tabName) {
+        document.body.classList.toggle('home-view', tabName === 'home');
         tabButtons.forEach((button) => {
           button.classList.toggle('active', button.dataset.tab === tabName);
         });
@@ -470,6 +497,7 @@
           panel.classList.toggle('active', panel.id === `${tabName}Tab`);
         });
         moveGlider();
+        if (tabName === 'home') loadAnnouncements();
         if (tabName === 'config') loadConfigTab();
         if (tabName === 'absences') loadAbsences();
       }
@@ -562,6 +590,43 @@
           throw new Error('unauthorized');
         }
         return response;
+      }
+
+      async function loadAnnouncements() {
+        const list = document.getElementById('announcementList');
+        const updatedAt = document.getElementById('announcementUpdatedAt');
+        list.setAttribute('aria-busy', 'true');
+        try {
+          const response = await apiFetch('/api/announcements');
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error('Nie udało się pobrać ogłoszeń.');
+
+          if (!data.announcements.length) {
+            list.innerHTML = '<p class="home-announcement-state">Nie ma teraz żadnych ogłoszeń.</p>';
+          } else {
+            list.innerHTML = data.announcements.map((announcement) => `
+              <article class="home-announcement">
+                <div class="home-announcement-meta">
+                  <time datetime="${esc(announcement.createdAt)}">${esc(formatTimestamp(announcement.createdAt))}</time>
+                  <span>OGŁOSZENIE</span>
+                </div>
+                <div class="home-announcement-content">
+                  <h3>${esc(announcement.author)}</h3>
+                  ${announcement.content ? `<p>${esc(announcement.content)}</p>` : ''}
+                  ${announcement.imageUrl ? `<img src="${esc(announcement.imageUrl)}" alt="Załącznik do ogłoszenia" loading="lazy" />` : ''}
+                </div>
+              </article>
+            `).join('');
+          }
+
+          const refreshDate = data.updatedAt ? new Date(data.updatedAt) : new Date();
+          updatedAt.textContent = `Odświeżono ${refreshDate.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`;
+        } catch (_) {
+          list.innerHTML = '<p class="home-announcement-state">Ogłoszenia są chwilowo niedostępne.</p>';
+          updatedAt.textContent = '';
+        } finally {
+          list.setAttribute('aria-busy', 'false');
+        }
       }
 
       async function loadMe() {
@@ -2022,7 +2087,7 @@
         } catch (_) { /* zostają ustawienia z localStorage */ }
       }
 
-      setActiveTab('overview');
+      setActiveTab('home');
       loadUserState();
       loadMe();
       loadTickets();
