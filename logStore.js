@@ -7,6 +7,15 @@ const memory = [];   // najnowsze na początku
 const pending = [];  // logi dodane zanim baza była gotowa
 const archivedTickets = new Map();
 const absenceMemory = new Map();
+const userStateMemory = new Map();
+const unsyncedArchives = new Set();   // wpisy zapisane tylko w pamięci, czekają na bazę
+const unsyncedAbsences = new Set();
+const readyListeners = [];
+const ARCHIVE_RETENTION_DAYS = Math.max(1, Number.parseInt(process.env.TICKET_ARCHIVE_RETENTION_DAYS, 10) || 365);
+const PENDING_LIMIT = 5000;
+let monitorTimer = null;
+let checking = false;
+let lastConnectError = '';
 let pool = null;
 let ready = false;
 let initDone = false;
@@ -15,6 +24,11 @@ let persistenceGeneration = 0;
 let persistenceQueue = Promise.resolve();
 
 export const storageMode = () => (ready ? 'postgres' : 'memory');
+export const storageDetails = () => ({ mode: storageMode(), configured: Boolean(pool), queued: pending.length + unsyncedArchives.size + unsyncedAbsences.size });
+export function onDatabaseReady(fn) {
+  readyListeners.push(fn);
+  if (ready) Promise.resolve().then(fn).catch((e) => console.error('onDatabaseReady:', e.message));
+}
 
 function sslFor(url) {
   if (process.env.DATABASE_SSL === 'false') return undefined;
@@ -24,17 +38,7 @@ function sslFor(url) {
 
 const INSERT_SQL = 'INSERT INTO dashboard_logs (ts, level, source, guild_id, command, message, meta) VALUES ($1,$2,$3,$4,$5,$6,$7)';
 
-export async function initLogStore() {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    initDone = true;
-    console.warn('⚠️ Brak DATABASE_URL — logi panelu są tylko w pamięci i znikną po restarcie.');
-    return;
-  }
-  try {
-    pool = new pg.Pool({ connectionString: url, max: 5, ssl: sslFor(url), connectionTimeoutMillis: 5000 });
-    pool.on('error', (e) => console.error('Błąd połączenia z bazą logów:', e.message));
-    await pool.query(`
+const SCHEMA_SQL = `
       CREATE TABLE IF NOT EXISTS dashboard_logs (
         id BIGSERIAL PRIMARY KEY,
         ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -74,18 +78,94 @@ export async function initLogStore() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_staff_absences_return ON staff_absences (returns_on) WHERE reminder_sent_at IS NULL;
-    `);
-    ready = true;
-    for (const row of pending.splice(0)) persist(row);
-    await purgeOld();
-    setInterval(purgeOld, 6 * 60 * 60 * 1000).unref();
-    console.log(`✅ Baza logów: PostgreSQL (retencja ${RETENTION_DAYS} dni).`);
-  } catch (error) {
-    console.error('❌ Nie udało się połączyć z bazą logów, używam pamięci:', error.message);
-    pool = null;
-  } finally {
-    initDone = true;
+          CREATE TABLE IF NOT EXISTS panel_user_state (
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, key)
+      );
+    `;
+
+async function setup() {
+  await pool.query(SCHEMA_SQL);
+  const wasDown = !ready;
+  ready = true;
+  await flushQueued();
+  await purgeOld();
+  if (wasDown) for (const fn of readyListeners) Promise.resolve().then(fn).catch((e) => console.error('onDatabaseReady:', e.message));
+}
+
+// Wysyła do bazy wszystko, co zebrało się w pamięci, gdy baza była niedostępna
+async function flushQueued() {
+  while (pending.length) {
+    const row = pending[0];
+    await pool.query(INSERT_SQL, [row.timestamp, row.level, row.source, row.guildId, row.command, row.message, row.meta]);
+    pending.shift();
   }
+  for (const id of [...unsyncedArchives]) {
+    const row = archivedTickets.get(id);
+    if (row) await upsertArchive(row);
+    archivedTickets.delete(id);
+    unsyncedArchives.delete(id);
+  }
+  for (const id of [...unsyncedAbsences]) {
+    const row = absenceMemory.get(id);
+    if (row) await upsertAbsence(row);
+    unsyncedAbsences.delete(id);
+  }
+}
+
+// Co 10 s: jeśli baza leży — próbuje połączyć ponownie; jeśli działa — opróżnia kolejkę zapisów
+async function checkHealth() {
+  if (!pool || checking) return;
+  checking = true;
+  try {
+    if (!ready) {
+      await setup();
+      if (lastConnectError) console.log('✅ Połączenie z bazą nawiązane — zapisuję zaległe dane.');
+      lastConnectError = '';
+    } else {
+      await pool.query('SELECT 1');
+      if (pending.length || unsyncedArchives.size || unsyncedAbsences.size) await flushQueued();
+    }
+  } catch (error) {
+    if (ready) console.warn('⚠️ Utracono połączenie z bazą — dane czekają w pamięci i zostaną zapisane po powrocie:', error.message);
+    else if (error.message !== lastConnectError) console.error('❌ Brak połączenia z bazą (ponawiam co 10 s):', error.message);
+    lastConnectError = error.message || 'error';
+    ready = false;
+  } finally {
+    checking = false;
+  }
+}
+
+export async function initLogStore() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    initDone = true;
+    console.warn('⚠️ Brak DATABASE_URL — logi panelu są tylko w pamięci i znikną po restarcie.');
+    return;
+  }
+  pool = new pg.Pool({ connectionString: url, max: 5, ssl: sslFor(url), connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+  pool.on('error', (e) => console.error('Błąd połączenia z bazą (pool):', e.message));
+  await checkHealth();
+  if (ready) console.log(`✅ Baza logów: PostgreSQL (logi ${RETENTION_DAYS} dni, archiwum ticketów ${ARCHIVE_RETENTION_DAYS} dni).`);
+  initDone = true;
+  monitorTimer = setInterval(checkHealth, 10 * 1000);
+  monitorTimer.unref();
+  setInterval(purgeOld, 6 * 60 * 60 * 1000).unref();
+}
+
+// Zamknięcie przy wyłączaniu bota: dokończ zapisy i zwolnij połączenia
+export async function closeLogStore() {
+  clearInterval(monitorTimer);
+  try {
+    await persistenceQueue;
+    if (ready && (pending.length || unsyncedArchives.size || unsyncedAbsences.size)) await flushQueued();
+  } catch (e) {
+    console.error('Nie wszystkie dane zdążyły się zapisać przed zamknięciem:', e.message);
+  }
+  try { await pool?.end(); } catch { /* zamykamy mimo błędu */ }
 }
 
 export async function readServerConfigs() {
@@ -104,12 +184,7 @@ export async function writeServerConfig(guildId, settings) {
   `, [guildId, settings]);
 }
 
-export async function saveArchivedTicket(ticket, messages) {
-  const row = { channelId: String(ticket.id), guildId: String(ticket.guildId), deletedAt: new Date().toISOString(), ticket, messages };
-  if (!ready) {
-    archivedTickets.set(row.channelId, row);
-    return;
-  }
+async function upsertArchive(row) {
   await pool.query(`
     INSERT INTO archived_tickets (channel_id, guild_id, deleted_at, ticket, messages)
     VALUES ($1, $2, $3, $4, $5)
@@ -119,17 +194,33 @@ export async function saveArchivedTicket(ticket, messages) {
   `, [row.channelId, row.guildId, row.deletedAt, JSON.stringify(row.ticket), JSON.stringify(row.messages)]);
 }
 
+export async function saveArchivedTicket(ticket, messages) {
+  const row = { channelId: String(ticket.id), guildId: String(ticket.guildId), deletedAt: new Date().toISOString(), ticket, messages };
+  if (ready) {
+    try {
+      await upsertArchive(row);
+      archivedTickets.delete(row.channelId);
+      return;
+    } catch (e) {
+      console.error('Zapis archiwum ticketu do bazy nie powiódł się, zapiszę ponownie po powrocie bazy:', e.message);
+    }
+  }
+  archivedTickets.set(row.channelId, row);          // rozmowa nie przepada — czeka w pamięci
+  if (pool) unsyncedArchives.add(row.channelId);
+}
+
 export async function listArchivedTickets(guildId) {
-  if (!ready) return [...archivedTickets.values()].filter((row) => row.guildId === String(guildId)).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
-  const result = await pool.query('SELECT channel_id, guild_id, deleted_at, ticket FROM archived_tickets WHERE guild_id = $1 ORDER BY deleted_at DESC', [String(guildId)]);
-  return result.rows.map((row) => ({ channelId: row.channel_id, guildId: row.guild_id, deletedAt: new Date(row.deleted_at).toISOString(), ticket: row.ticket }));
+  const local = [...archivedTickets.values()].filter((row) => row.guildId === String(guildId));
+  if (!ready) return local.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  const result = await pool.query('SELECT channel_id, guild_id, deleted_at, ticket FROM archived_tickets WHERE guild_id = $1 ORDER BY deleted_at DESC LIMIT 300', [String(guildId)]);
+  const stored = result.rows.map((row) => ({ channelId: row.channel_id, guildId: row.guild_id, deletedAt: new Date(row.deleted_at).toISOString(), ticket: row.ticket }));
+  return [...local, ...stored].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt)).slice(0, 300);
 }
 
 export async function getArchivedTicket(channelId, guildId) {
-  if (!ready) {
-    const row = archivedTickets.get(String(channelId));
-    return row?.guildId === String(guildId) ? row : null;
-  }
+  const local = archivedTickets.get(String(channelId));
+  if (local?.guildId === String(guildId)) return local;
+  if (!ready) return null;
   const result = await pool.query('SELECT channel_id, guild_id, deleted_at, ticket, messages FROM archived_tickets WHERE channel_id = $1 AND guild_id = $2', [String(channelId), String(guildId)]);
   const row = result.rows[0];
   return row ? { channelId: row.channel_id, guildId: row.guild_id, deletedAt: new Date(row.deleted_at).toISOString(), ticket: row.ticket, messages: row.messages } : null;
@@ -142,6 +233,14 @@ const absenceFromRow = (row) => ({
   reminderSentAt: row.reminder_sent_at ? new Date(row.reminder_sent_at).toISOString() : null
 });
 
+async function upsertAbsence(row) {
+  await pool.query(`
+    INSERT INTO staff_absences (id, guild_id, user_id, display_name, kind, reason, starts_on, returns_on)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (id) DO NOTHING
+  `, [row.id, row.guildId, row.userId, row.displayName, row.kind, row.reason, row.startsOn, row.returnsOn]);
+}
+
 export async function saveAbsence(absence) {
   const row = {
     id: String(absence.id), guildId: String(absence.guildId), userId: String(absence.userId),
@@ -149,15 +248,11 @@ export async function saveAbsence(absence) {
     reason: String(absence.reason || '').slice(0, 1000), startsOn: String(absence.startsOn),
     returnsOn: absence.returnsOn ? String(absence.returnsOn) : null, reminderSentAt: null
   };
-  if (!ready) {
-    absenceMemory.set(row.id, row);
-    return;
+  if (ready) {
+    try { await upsertAbsence(row); return; } catch (e) { console.error('Zapis nieobecności nie powiódł się, ponowię po powrocie bazy:', e.message); }
   }
-  await pool.query(`
-    INSERT INTO staff_absences (id, guild_id, user_id, display_name, kind, reason, starts_on, returns_on)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    ON CONFLICT (id) DO NOTHING
-  `, [row.id, row.guildId, row.userId, row.displayName, row.kind, row.reason, row.startsOn, row.returnsOn]);
+  absenceMemory.set(row.id, row);
+  if (pool) unsyncedAbsences.add(row.id);
 }
 
 export async function listActiveAbsences(today, guildId = null) {
@@ -193,20 +288,33 @@ export async function markAbsenceReminderSent(id) {
 }
 
 async function purgeOld() {
+  if (!ready) return;
   try {
     await pool.query("DELETE FROM dashboard_logs WHERE ts < NOW() - ($1 || ' days')::interval", [String(RETENTION_DAYS)]);
+    await pool.query("DELETE FROM archived_tickets WHERE deleted_at < NOW() - ($1 || ' days')::interval", [String(ARCHIVE_RETENTION_DAYS)]);
   } catch (e) {
     console.error('Błąd czyszczenia starych logów:', e.message);
   }
 }
 
+function queuePending(row) {
+  pending.push(row);
+  if (pending.length > PENDING_LIMIT) pending.splice(0, pending.length - PENDING_LIMIT);
+}
+
 function persist(row) {
   const generation = persistenceGeneration;
-  const write = persistenceQueue.then(() => {
-    if (!ready || generation !== persistenceGeneration) return;
-    return pool.query(INSERT_SQL, [row.timestamp, row.level, row.source, row.guildId, row.command, row.message, row.meta]);
+  const write = persistenceQueue.then(async () => {
+    if (generation !== persistenceGeneration) return;
+    if (!ready) { queuePending(row); return; }
+    try {
+      await pool.query(INSERT_SQL, [row.timestamp, row.level, row.source, row.guildId, row.command, row.message, row.meta]);
+    } catch (e) {
+      console.error('Błąd zapisu logu do bazy (zostanie ponowiony):', e.message);
+      queuePending(row);
+    }
   });
-  persistenceQueue = write.catch((e) => console.error('Błąd zapisu logu do bazy:', e.message));
+  persistenceQueue = write.catch(() => {});
 }
 
 export async function clearLogs({ source = null, guildId = null } = {}) {
@@ -254,7 +362,7 @@ export function addLog(level = 'info', message = '', meta = {}) {
   memory.unshift(row);
   if (memory.length > MEMORY_LIMIT) memory.length = MEMORY_LIMIT;
   if (ready) persist(row);
-  else if (!initDone) pending.push(row);
+  else if (pool) queuePending(row);   // baza chwilowo niedostępna — log dopiszemy po jej powrocie
 }
 
 // ---------- Filtry ----------
@@ -414,4 +522,36 @@ export async function exportCsv(f) {
   const lines = ['Data;Poziom;Zrodlo;Serwer (ID);Komenda;Tresc'];
   for (const l of logs) lines.push([l.timestamp, l.level, l.source === 'server' ? 'serwer' : 'system', l.guildId, l.command, l.message].map(csvCell).join(';'));
   return `\uFEFF${lines.join('\r\n')}`;
+}
+
+// ---------- Ustawienia użytkownika panelu (np. przeczytane tickety, dźwięk) ----------
+export async function getUserState(userId) {
+  const id = String(userId);
+  const local = userStateMemory.get(id) || {};
+  if (!ready) return { ...local };
+  try {
+    const result = await pool.query('SELECT key, value FROM panel_user_state WHERE user_id = $1', [id]);
+    return { ...Object.fromEntries(result.rows.map((r) => [r.key, r.value])), ...local };
+  } catch (e) {
+    console.error('Odczyt ustawień użytkownika:', e.message);
+    return { ...local };
+  }
+}
+
+export async function setUserState(userId, key, value) {
+  const id = String(userId);
+  const local = userStateMemory.get(id) || {};
+  local[key] = value;
+  userStateMemory.set(id, local);
+  if (!ready) return false;
+  try {
+    await pool.query(`
+      INSERT INTO panel_user_state (user_id, key, value, updated_at) VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `, [id, String(key), JSON.stringify(value)]);
+    return true;
+  } catch (e) {
+    console.error('Zapis ustawień użytkownika:', e.message);
+    return false;
+  }
 }
