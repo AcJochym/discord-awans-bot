@@ -3,13 +3,30 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { verifyKeyMiddleware, InteractionType, InteractionResponseType } from 'discord-interactions';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
-import fetch from 'node-fetch';
+import { fetch } from './shared.js';
+import { securityHeaders, serveHtml, rateLimit, sameOrigin, errorHandler } from './security.js';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
-import { broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
-import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
+import { broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
+import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1); // Railway: jedno proxy przed aplikacją (prawdziwy adres IP w req.ip)
+app.use(securityHeaders);
+
+// Limity zapytań (w pamięci, na adres IP). Strumień zdarzeń i health-check pomijamy.
+const authLimiter = rateLimit({ windowMs: 60_000, max: 40, redirect: '/login?error=blad' });
+const apiLimiter = rateLimit({ windowMs: 60_000, max: 1500 });
+const writeLimiter = rateLimit({ windowMs: 60_000, max: 150 });
+app.use('/auth', authLimiter);
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.path === '/health' || req.path === '/tickets/events') return next();
+  return apiLimiter(req, res, () => (req.method === 'GET' ? next() : writeLimiter(req, res, next)));
+});
+// Ochrona CSRF dla każdej trasy zmieniającej dane (poza podpisanym webhookiem Discorda)
+app.use((req, res, next) => (req.path === '/interactions' ? next() : sameOrigin(req, res, next)));
 const PORT = process.env.PORT || 8080;
 const ROOT_DIR = process.cwd();
 
@@ -264,6 +281,14 @@ const discordClient = new Client({
 discordClient.once('ready', () => {
   console.log(`🤖 Połączono z Discord Gateway jako ${discordClient.user.tag}`);
 });
+
+// Zmiany ticketów (nowy kanał, zamknięcie/otwarcie, usunięcie, edycja i usunięcie wiadomości) → odświeżenie panelu na żywo
+const signalTicket = (channel, kind) => broadcastTicketGatewayChannel(channel, kind).catch((error) => console.error('Błąd SSE ticketu:', error.message));
+discordClient.on('channelCreate', (channel) => signalTicket(channel, 'create'));
+discordClient.on('channelUpdate', (_old, channel) => signalTicket(channel, 'update'));
+discordClient.on('channelDelete', (channel) => signalTicket(channel, 'delete'));
+discordClient.on('messageUpdate', (_old, message) => { if (message.channel) signalTicket(message.channel, 'message'); });
+discordClient.on('messageDelete', (message) => { if (message.channel) signalTicket(message.channel, 'message'); });
 
 discordClient.on('messageCreate', async message => {
   if (message.guildId && message.channel?.topic?.startsWith('ticket|')) {
@@ -823,7 +848,7 @@ async function requireDashboardAuth(req, res, next) {
 
 app.get('/login', (req, res) => {
   if (readSigned(parseCookies(req).dash_session)) return res.redirect('/dashboard');
-  res.sendFile(path.join(ROOT_DIR, 'login.html'));
+  serveHtml(path.join(ROOT_DIR, 'login.html'))(req, res);
 });
 
 app.get('/auth/discord', (req, res) => {
@@ -902,6 +927,24 @@ function requireBotOwner(req, res, next) {
   next();
 }
 
+const USER_STATE_KEYS = new Set(['tkSeen', 'sound']);
+
+app.get('/api/state', requireDashboardAuth, async (req, res) => {
+  res.json({ ok: true, state: await getUserState(req.dashUser.id) });
+});
+
+app.put('/api/state', requireDashboardAuth, express.json({ limit: '30kb' }), async (req, res) => {
+  const { key, value } = req.body || {};
+  if (!USER_STATE_KEYS.has(key)) return res.status(400).json({ ok: false, error: 'Niedozwolony klucz.' });
+  if (key === 'sound' && typeof value !== 'boolean') return res.status(400).json({ ok: false, error: 'Niepoprawna wartość.' });
+  if (key === 'tkSeen') {
+    const entries = value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : null;
+    if (!entries || entries.length > 400 || entries.some(([k, v]) => !/^\d{5,25}$/.test(k) || !/^\d{5,25}$/.test(String(v)))) return res.status(400).json({ ok: false, error: 'Niepoprawna wartość.' });
+  }
+  const saved = await setUserState(req.dashUser.id, key, value);
+  res.json({ ok: true, persisted: saved });
+});
+
 app.get('/api/me', requireDashboardAuth, (req, res) => {
   const { id, name, avatar } = req.dashUser;
   res.json({ ok: true, id, name, avatarUrl: dashAvatarUrl(id, avatar), isBotOwner: Boolean(BOT_OWNER_ID && id === BOT_OWNER_ID) });
@@ -918,24 +961,14 @@ app.get('/api/presence', requireDashboardAuth, (req, res) => {
   res.json({ ok: true, count: online.length, online, events, lastSeq: dashEventSeq });
 });
 
-app.get('/dashboard', requireDashboardAuth, (_req, res) => {
-  res.sendFile(path.join(ROOT_DIR, 'dashboard.html'));
-});
+app.get('/dashboard', requireDashboardAuth, (req, res) => serveHtml(path.join(ROOT_DIR, 'dashboard.html'))(req, res));
 
 app.get('/dashboard.css', (_req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'dashboard.css'));
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({
-    ok: true,
-    name: 'Law Enforcement',
-    uptimeSeconds: Math.round(process.uptime()),
-    startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
-    guilds: Object.keys(serverConfigs).length,
-    port: PORT,
-    timestamp: new Date().toISOString()
-  });
+  res.json({ ok: true, uptimeSeconds: Math.round(process.uptime()) });
 });
 
 app.get('/api/dashboard-summary', requireDashboardAuth, async (_req, res) => {
@@ -957,7 +990,8 @@ app.get('/api/dashboard-summary', requireDashboardAuth, async (_req, res) => {
       serverLogs,
       lastUpdated: new Date().toISOString(),
       logsCount: botLogs + serverLogs,
-      storage: storageMode()
+      storage: storageMode(),
+      storageDetail: storageDetails()
     };
 
     res.json(summary);
@@ -1734,12 +1768,53 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
 
 const SERVER_PORT = process.env.PORT || 8080;
 
+// Ostatnia linia obrony dla błędów middleware (np. za duży JSON) — musi być po wszystkich trasach
+app.use(errorHandler);
+
+let httpServer = null;
+let shuttingDown = false;
+let lastRejectionLog = 0;
+
+async function shutdown(reason, exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`⏹️ Zamykanie bota (${reason})…`);
+  const failsafe = setTimeout(() => process.exit(exitCode || 1), 10_000);
+  failsafe.unref();
+  try {
+    httpServer?.close();
+    httpServer?.closeAllConnections?.();   // kończy też otwarte strumienie zdarzeń (SSE)
+    await discordClient.destroy();
+    await closeLogStore();
+  } catch (error) {
+    console.error('Błąd podczas zamykania:', error.message);
+  }
+  process.exit(exitCode);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => {
+  console.error('Nieobsłużone odrzucenie obietnicy:', reason);
+  const now = Date.now();
+  if (now - lastRejectionLog > 30_000) {   // nie zaśmiecaj logów panelu przy powtarzających się błędach
+    lastRejectionLog = now;
+    try { addDashboardLog('error', `Nieobsłużony błąd: ${reason?.message || reason}`, { source: 'bot' }); } catch { /* pomijamy */ }
+  }
+});
+process.on('uncaughtException', (error) => {
+  console.error('Nieprzechwycony wyjątek:', error);
+  shutdown('uncaughtException', 1);   // stan może być uszkodzony — restart robi Railway
+});
+
 async function startServer() {
   await logStoreReady;
   await loadSavedServerConfigs();
+  // Jeśli baza była niedostępna przy starcie, wczytaj zapisane ustawienia, gdy tylko wróci
+  if (storageMode() === 'postgres') onDatabaseReady(() => {}); else onDatabaseReady(() => loadSavedServerConfigs());
   processAbsenceReturnReminders();
   setInterval(processAbsenceReturnReminders, 60 * 1000).unref();
-  app.listen(SERVER_PORT, '0.0.0.0', () => {
+  httpServer = app.listen(SERVER_PORT, '0.0.0.0', () => {
     console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
     addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`, { source: 'bot' });
     announceUpdateToAllServers();
