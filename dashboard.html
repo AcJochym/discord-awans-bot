@@ -14,9 +14,9 @@
   <body>
     <div class="dashboard-shell">
       <header class="topbar hero">
-        <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" onerror="this.remove()" />
+        <img class="hero-banner" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/kartotekabeka.png" alt="" data-hide-on-error />
         <div class="brand">
-          <img class="brand-logo" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" alt="Law Enforcement" onerror="this.remove()" />
+          <img class="brand-logo" src="https://r2.fivemanage.com/UgCLJE0OXMoyZNPTqH3xn/lawenforcement.png" alt="Law Enforcement" data-hide-on-error />
           <div>
             <h1>Panel administracyjny</h1>
             <p class="subtitle">Law Enforcement</p>
@@ -397,6 +397,11 @@
     <div id="toasts" class="toasts" aria-live="polite"></div>
 
     <script>
+      document.querySelectorAll('img[data-hide-on-error]').forEach((img) => {
+        const hide = () => img.remove();
+        img.addEventListener('error', hide);
+        if (img.complete && img.naturalWidth === 0) hide();
+      });
       const statusBadge = document.getElementById('statusBadge');
       const statusText = document.getElementById('statusText');
       const statusTextChip = document.getElementById('statusTextChip');
@@ -618,6 +623,7 @@
       soundBtn.addEventListener('click', () => {
         soundOn = !soundOn;
         try { localStorage.setItem('dashSound', soundOn ? 'on' : 'off'); } catch (_) { /* pomijamy */ }
+        saveUserState('sound', soundOn);
         unlockAudio();
         renderSoundBtn();
         if (soundOn) setTimeout(playChime, 50);
@@ -962,7 +968,15 @@
       }, true);
       let tkSeen = {};
       try { tkSeen = JSON.parse(localStorage.getItem('tkSeen') || '{}'); } catch (_) { tkSeen = {}; }
-      const tkSaveSeen = () => { try { localStorage.setItem('tkSeen', JSON.stringify(tkSeen)); } catch (_) { /* pomijamy */ } };
+      let tkSeenTimer;
+      const tkSaveSeen = () => {
+        try { localStorage.setItem('tkSeen', JSON.stringify(tkSeen)); } catch (_) { /* pomijamy */ }
+        clearTimeout(tkSeenTimer);
+        tkSeenTimer = setTimeout(() => {
+          const entries = Object.entries(tkSeen).sort((a, b) => (idGt(a[1], b[1]) ? -1 : 1)).slice(0, 400);
+          saveUserState('tkSeen', Object.fromEntries(entries));
+        }, 1500);
+      };
       const idGt = (a, b) => { try { return BigInt(a) > BigInt(b || 0); } catch (_) { return false; } };
       const tkTime = (v) => new Date(v).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
       const tkAgo = (v) => {
@@ -1331,6 +1345,22 @@
       }
 
       const ticketEvents = new EventSource('/api/tickets/events');
+      let ticketEventsWasOpen = false;
+      ticketEvents.addEventListener('open', () => {
+        if (ticketEventsWasOpen) { loadTickets(); tkPoll(); }   // po zerwaniu połączenia dociągnij to, co umknęło
+        ticketEventsWasOpen = true;
+      });
+      ticketEvents.addEventListener('ticket-update', (event) => {
+        try {
+          const update = JSON.parse(event.data);
+          clearTimeout(tk.listRefreshTimer);
+          tk.listRefreshTimer = setTimeout(loadTickets, 400);
+          if (tk.current?.id === update.channelId && !tk.current.archived) {
+            clearTimeout(tk.messageRefreshTimer);
+            tk.messageRefreshTimer = setTimeout(() => tkPoll(), 200);
+          }
+        } catch (_) { /* pomijamy nieczytelne zdarzenie */ }
+      });
       ticketEvents.addEventListener('ticket-message', (event) => {
         try { handleTicketGatewayEvent(JSON.parse(event.data)); } catch (_) { /* pomijamy nieczytelne zdarzenie */ }
       });
@@ -1972,16 +2002,39 @@
         refreshActivityIfIdle();
       }
 
+      async function saveUserState(key, value) {
+        try {
+          await fetch('/api/state', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) });
+        } catch (_) { /* zapis zapasowy jest w localStorage */ }
+      }
+
+      // Ustawienia z bazy mają pierwszeństwo — działają tak samo na każdym urządzeniu
+      async function loadUserState() {
+        try {
+          const data = await (await apiFetch('/api/state')).json();
+          if (!data.ok) return;
+          if (typeof data.state.sound === 'boolean') { soundOn = data.state.sound; renderSoundBtn(); }
+          if (data.state.tkSeen && typeof data.state.tkSeen === 'object') {
+            Object.entries(data.state.tkSeen).forEach(([id, last]) => { if (idGt(last, tkSeen[id])) tkSeen[id] = String(last); });
+            tk.listSig = '';
+            renderTicketList();
+          }
+        } catch (_) { /* zostają ustawienia z localStorage */ }
+      }
+
       setActiveTab('overview');
+      loadUserState();
       loadMe();
       loadTickets();
       loadStaff();
       setInterval(loadStaff, 5 * 60 * 1000);
       reloadActivity();
       pollPresence();
-      setInterval(pollPresence, 5000);
+      let hiddenTicks = 0;
+      setInterval(() => { if (!document.hidden || ++hiddenTicks % 3 === 0) pollPresence(); }, 15000);
       refreshDashboard().then(() => { animateLists = false; });
-      setInterval(refreshDashboard, 15000);
+      setInterval(() => { if (!document.hidden) refreshDashboard(); }, 15000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollPresence(); refreshDashboard(); } });
     </script>
   </body>
 </html>
