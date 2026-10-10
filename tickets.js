@@ -5,7 +5,7 @@
 // a numeracja jest odtwarzana z istniejących kanałów i ostatnich logów.
 // Pełny opis konfiguracji: TICKETS.md
 
-import fetch from 'node-fetch';
+import { fetch } from './shared.js';
 import { saveArchivedTicket } from './logStore.js';
 import { staffRoleIds, ticketAccessRoleIds } from './staff.js';
 
@@ -73,8 +73,9 @@ async function sendFile(channelId, payload, filename, fileText) {
     const form = new FormData();
     form.append('payload_json', JSON.stringify({ ...payload, attachments: [{ id: 0, filename }] }));
     form.append('files[0]', new Blob([fileText], { type: 'text/html' }), filename);
-    const res = await globalThis.fetch(`${API}/channels/${channelId}/messages`, {
+    const res = await fetch(`${API}/channels/${channelId}/messages`, {
       method: 'POST',
+      timeout: 60000,
       headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` },
       body: form
     });
