@@ -180,6 +180,21 @@
         </div>
       </section>
 
+      <section id="commandsTab" class="tab-panel">
+        <div class="glass-card cmd-panel">
+          <div class="panel-header cmd-header">
+            <div>
+              <h2>Komendy</h2>
+              <p class="muted">Wybierz komendę i uzupełnij formularz — bot wyśle wiadomość na kanał skonfigurowany dla serwera.</p>
+            </div>
+            <label id="cmdGuildWrap" class="absence-filter" for="cmdGuild" hidden>Serwer
+              <select id="cmdGuild" aria-label="Serwer"></select>
+            </label>
+          </div>
+          <div id="cmdGroups" class="cmd-groups"><div class="empty">Ładowanie komend…</div></div>
+        </div>
+      </section>
+
       <section id="ticketsTab" class="tab-panel">
         <div id="tkLayout" class="tk-layout">
           <div class="glass-card tk-list-card">
@@ -382,6 +397,26 @@
       </div>
     </div>
 
+    <div id="cmdModal" class="modal" hidden>
+      <div class="modal-card glass-card cmd-modal" role="dialog" aria-modal="true" aria-labelledby="cmdTitle">
+        <button type="button" id="cmdClose" class="modal-close" aria-label="Zamknij">&times;</button>
+        <form id="cmdForm" class="cmd-form" novalidate>
+          <h2 id="cmdTitle"></h2>
+          <p id="cmdDesc" class="muted"></p>
+          <p id="cmdTarget" class="cmd-target"></p>
+          <div id="cmdFields" class="cmd-fields"></div>
+          <p id="cmdStatus" class="cmd-status" role="status" aria-live="polite"></p>
+          <div class="cmd-actions">
+            <button type="button" id="cmdCancel" class="ghost-btn">Anuluj</button>
+            <button type="submit" id="cmdSend" class="cmd-submit">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12 2-12 2z" fill="currentColor"/></svg>
+              <span>Wyślij komendę</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div id="tkConfirmModal" class="modal" hidden>
       <div class="modal-card glass-card confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="tkConfirmTitle" aria-describedby="tkConfirmDescription">
         <div class="confirm-body">
@@ -504,6 +539,7 @@
         if (tabName === 'home') loadAnnouncements();
         if (tabName === 'config') loadConfigTab();
         if (tabName === 'absences') loadAbsences();
+        if (tabName === 'commands') loadCommands();
       }
 
       tabButtons.forEach((button) => {
@@ -2097,6 +2133,260 @@
           refreshActivityIfIdle();
         }
       }
+
+      /* --- Komendy: przyciski, formularz w popupie, wysyłanie --- */
+      const cmd = { guild: '', data: null, current: null, values: {}, sending: false, lastFocus: null, closeTimer: null };
+      const cmdEl = (id) => document.getElementById(id);
+      const cmdModal = cmdEl('cmdModal');
+
+      async function loadCommands() {
+        const box = cmdEl('cmdGroups');
+        try {
+          const data = await (await apiFetch(`/api/commands${cmd.guild ? `?guild=${encodeURIComponent(cmd.guild)}` : ''}`)).json();
+          if (!data.ok) { box.innerHTML = `<div class="empty">${esc(data.error || 'Brak dostępu do komend.')}</div>`; return; }
+          cmd.data = data;
+          cmd.guild = data.guildId;
+          cmdEl('cmdGuildWrap').hidden = data.guilds.length < 2;
+          const select = cmdEl('cmdGuild');
+          select.replaceChildren(...data.guilds.map((g) => new Option(g.name, g.id)));
+          select.value = data.guildId;
+          renderCommandButtons();
+        } catch (_) { /* przekierowanie obsłuży apiFetch */ }
+      }
+
+      function renderCommandButtons() {
+        let index = 0;
+        cmdEl('cmdGroups').replaceChildren(...cmd.data.groups.map((group) => {
+          const section = document.createElement('section');
+          section.className = 'cmd-group';
+          const title = document.createElement('h3');
+          title.textContent = group.label;
+          const grid = document.createElement('div');
+          grid.className = 'cmd-grid';
+          group.commands.forEach((c) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'cmd-btn';
+            button.style.setProperty('--i', index++);
+            button.disabled = !c.configured;
+            button.title = c.configured ? c.description : 'Kanał docelowy tej komendy nie jest skonfigurowany na tym serwerze.';
+            button.innerHTML = `<span class="cmd-emoji">${esc(c.emoji)}</span><span class="cmd-name">/${esc(c.name)}</span><span class="cmd-label">${esc(c.label)}</span><span class="cmd-sub">${esc(c.configured ? (c.channelName ? `#${c.channelName}` : 'kanał ustawiony') : 'brak kanału w konfiguracji')}</span>`;
+            button.addEventListener('click', () => openCommand(c));
+            grid.appendChild(button);
+          });
+          section.append(title, grid);
+          return section;
+        }));
+      }
+
+      cmdEl('cmdGuild').addEventListener('change', (e) => { cmd.guild = e.target.value; loadCommands(); });
+
+      function cmdSetStatus(kind, text) {
+        const status = cmdEl('cmdStatus');
+        status.textContent = text || '';
+        status.className = `cmd-status${kind ? ` ${kind}` : ''}`;
+      }
+
+      function cmdFieldError(key, message) {
+        const wrap = cmdEl('cmdFields').querySelector(`[data-field="${CSS.escape(key)}"]`);
+        if (!wrap) return;
+        wrap.classList.toggle('invalid', Boolean(message));
+        wrap.querySelector('.cmd-err').textContent = message || '';
+      }
+
+      function cmdSetValue(key, value) {
+        cmd.values[key] = value;
+        cmdFieldError(key, '');
+      }
+
+      // Wybór użytkownika z podpowiedziami (wyszukiwanie członków serwera)
+      function buildUserPicker(field, wrap) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = `cmd_${field.key}`;
+        input.autocomplete = 'off';
+        input.placeholder = 'Wpisz nick lub nazwę (min. 2 znaki)…';
+        input.setAttribute('role', 'combobox');
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-expanded', 'false');
+        const list = document.createElement('ul');
+        list.className = 'cmd-suggest';
+        list.setAttribute('role', 'listbox');
+        list.hidden = true;
+        const chip = document.createElement('div');
+        chip.className = 'cmd-chip';
+        chip.hidden = true;
+        let timer;
+        let seq = 0;
+        let active = -1;
+        let items = [];
+
+        const closeList = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; };
+        const choose = (member) => {
+          cmdSetValue(field.key, member.id);
+          chip.innerHTML = `<img src="${esc(member.avatarUrl)}" alt="" /><span><strong>${esc(member.name)}</strong> <span class="muted">${esc(member.username ? `@${member.username}` : '')}</span></span><button type="button" aria-label="Usuń wybór">✕</button>`;
+          chip.querySelector('button').addEventListener('click', () => { cmdSetValue(field.key, ''); chip.hidden = true; input.hidden = false; input.value = ''; input.focus(); });
+          chip.hidden = false;
+          input.hidden = true;
+          closeList();
+        };
+        const highlight = () => [...list.children].forEach((li, i) => li.classList.toggle('active', i === active));
+
+        input.addEventListener('input', () => {
+          const q = input.value.trim();
+          clearTimeout(timer);
+          if (/^\d{15,25}$/.test(q)) { choose({ id: q, name: `ID ${q}`, username: '', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png' }); return; }
+          if (q.length < 2) { closeList(); return; }
+          timer = setTimeout(async () => {
+            const mine = ++seq;
+            try {
+              const data = await (await apiFetch(`/api/commands/members?guild=${encodeURIComponent(cmd.guild)}&q=${encodeURIComponent(q)}`)).json();
+              if (mine !== seq) return;
+              items = data.ok ? data.members : [];
+              list.replaceChildren(...(items.length ? items.map((m) => {
+                const li = document.createElement('li');
+                li.setAttribute('role', 'option');
+                li.innerHTML = `<img src="${esc(m.avatarUrl)}" alt="" /><span><strong>${esc(m.name)}</strong> <span class="muted">@${esc(m.username)}</span></span>`;
+                li.addEventListener('mousedown', (e) => { e.preventDefault(); choose(m); });
+                return li;
+              }) : [Object.assign(document.createElement('li'), { className: 'none', textContent: data.ok ? 'Nie znaleziono nikogo o takiej nazwie.' : (data.error || 'Błąd wyszukiwania.') })]));
+              active = -1;
+              list.hidden = false;
+              input.setAttribute('aria-expanded', 'true');
+            } catch (_) { /* pomijamy */ }
+          }, 250);
+        });
+        input.addEventListener('keydown', (e) => {
+          if (list.hidden || !items.length) return;
+          if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
+          else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(items[active]); }
+          else if (e.key === 'Escape') { e.stopPropagation(); closeList(); }
+        });
+        input.addEventListener('blur', () => setTimeout(closeList, 120));
+        wrap.append(input, chip, list);
+      }
+
+      function buildCommandField(field) {
+        const wrap = document.createElement('div');
+        wrap.className = `cmd-field${['number', 'date', 'time', 'select', 'bool'].includes(field.type) ? ' half' : ''}`;
+        wrap.dataset.field = field.key;
+        const id = `cmd_${field.key}`;
+        const label = document.createElement('label');
+        label.htmlFor = id;
+        label.innerHTML = `${esc(field.label)}${field.required ? ' <span class="req" aria-hidden="true">*</span>' : ''}`;
+
+        if (field.type === 'bool') {
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.id = id;
+          input.addEventListener('change', () => cmdSetValue(field.key, input.checked));
+          wrap.classList.add('bool');
+          wrap.append(input, label);
+        } else if (field.type === 'user') {
+          wrap.appendChild(label);
+          buildUserPicker(field, wrap);
+        } else {
+          wrap.appendChild(label);
+          let input;
+          if (field.type === 'select' || field.type === 'role') {
+            input = document.createElement('select');
+            input.appendChild(new Option('— wybierz —', ''));
+            const options = field.type === 'role' ? cmd.data.roles.map((r) => [r.id, r.name]) : field.options;
+            options.forEach(([value, text]) => input.appendChild(new Option(text, value)));
+          } else {
+            input = document.createElement('input');
+            input.type = field.type === 'date' ? 'date' : field.type === 'time' ? 'time' : 'text';
+            if (field.type === 'number') input.inputMode = 'numeric';
+            if (field.max && field.type !== 'number') input.maxLength = field.max;
+            if (field.placeholder) input.placeholder = field.placeholder;
+          }
+          input.id = id;
+          const update = () => {
+            const raw = input.value.trim();
+            cmdSetValue(field.key, field.type === 'date' && raw ? raw.split('-').reverse().join('.') : raw);
+          };
+          input.addEventListener('input', update);
+          input.addEventListener('change', update);
+          wrap.appendChild(input);
+        }
+        if (field.hint) { const hint = document.createElement('small'); hint.textContent = field.hint; wrap.appendChild(hint); }
+        const err = document.createElement('small');
+        err.className = 'cmd-err';
+        wrap.appendChild(err);
+        return wrap;
+      }
+
+      function openCommand(c) {
+        clearTimeout(cmd.closeTimer);
+        cmd.current = c;
+        cmd.values = {};
+        cmd.lastFocus = document.activeElement;
+        cmdEl('cmdTitle').textContent = `${c.emoji} /${c.name}`;
+        cmdEl('cmdDesc').textContent = c.description;
+        const guildName = cmd.data.guilds.find((g) => g.id === cmd.guild)?.name || '';
+        cmdEl('cmdTarget').textContent = `Wiadomość trafi na ${c.channelName ? `kanał #${c.channelName}` : 'skonfigurowany kanał'}${guildName ? ` • ${guildName}` : ''}.`;
+        cmdEl('cmdFields').replaceChildren(...c.fields.map(buildCommandField));
+        cmdSetStatus('', '');
+        cmdEl('cmdSend').disabled = false;
+        cmdModal.hidden = false;
+        document.body.classList.add('modal-open');
+        requestAnimationFrame(() => cmdModal.classList.add('open'));
+        setTimeout(() => cmdEl('cmdFields').querySelector('input:not([type=checkbox]), select')?.focus(), 80);
+      }
+
+      function closeCommand() {
+        if (cmdModal.hidden || cmd.sending) return;
+        cmdModal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+        cmd.closeTimer = setTimeout(() => { cmdModal.hidden = true; }, 260);
+        cmd.lastFocus?.focus?.();
+        cmd.current = null;
+      }
+
+      async function sendCommand() {
+        if (cmd.sending || !cmd.current) return;
+        let missing = 0;
+        cmd.current.fields.forEach((field) => {
+          cmdFieldError(field.key, '');
+          if (field.required && !String(cmd.values[field.key] ?? '').trim()) { cmdFieldError(field.key, 'To pole jest wymagane.'); missing += 1; }
+        });
+        if (missing) { cmdSetStatus('err', 'Uzupełnij wymagane pola.'); cmdEl('cmdFields').querySelector('.invalid input:not([hidden]), .invalid select')?.focus(); return; }
+
+        cmd.sending = true;
+        cmdEl('cmdSend').disabled = true;
+        cmdEl('cmdSend').classList.add('sending');
+        cmdSetStatus('', 'Wysyłanie…');
+        try {
+          const response = await fetch('/api/commands/run', {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ guild: cmd.guild, command: cmd.current.name, values: cmd.values })
+          });
+          if (response.status === 401) { location.href = '/login'; return; }
+          const data = await response.json().catch(() => ({ ok: false, error: 'Nieoczekiwana odpowiedź serwera.' }));
+          if (!data.ok) {
+            (data.errors || []).forEach((e) => cmdFieldError(e.field, e.message));
+            cmdSetStatus('err', data.error || 'Nie udało się wysłać komendy.');
+            cmdEl('cmdSend').disabled = false;
+            return;
+          }
+          cmdSetStatus('ok', `✅ Wysłano${data.channelName ? ` na #${data.channelName}` : ''}.`);
+          cmd.sending = false;
+          setTimeout(closeCommand, 1300);
+        } catch (_) {
+          cmdSetStatus('err', 'Nie udało się wysłać. Spróbuj ponownie.');
+          cmdEl('cmdSend').disabled = false;
+        } finally {
+          cmd.sending = false;
+          cmdEl('cmdSend').classList.remove('sending');
+        }
+      }
+
+      cmdEl('cmdForm').addEventListener('submit', (e) => { e.preventDefault(); sendCommand(); });
+      cmdEl('cmdClose').addEventListener('click', closeCommand);
+      cmdEl('cmdCancel').addEventListener('click', closeCommand);
+      cmdModal.addEventListener('click', (e) => { if (e.target === cmdModal) closeCommand(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCommand(); });
 
       async function saveUserState(key, value) {
         try {
