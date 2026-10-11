@@ -33,17 +33,17 @@ export const COMMAND_DEFS = [
   { name: 'degradacja', label: 'Degradacja', emoji: '📉', group: 'Kadry', description: 'Obniża stopień osoby i zmienia numer odznaki.', fields: [...PERSON.slice(0, 3), f('stopien', 'Nowy stopień (rola)', 'role'), f('odznaka', 'Nowy numer odznaki', 'text', { max: 20 })] },
   { name: 'zawieszenie', label: 'Zawieszenie', emoji: '⏸️', group: 'Kadry', description: 'Zawiesza osobę na określony czas (nadaje rolę zawieszenia).', fields: [...PERSON, f('czas', 'Czas zawieszenia', 'text', { max: 60, placeholder: 'np. 7 dni, 2 tygodnie albo 25.06.2026', hint: 'Bot sam wyliczy datę powrotu.' })] },
   { name: 'zwolnij', label: 'Zwolnienie', emoji: '🚪', group: 'Kadry', description: 'Zwalnia osobę ze struktur i wysyła jej powiadomienie.', fields: PERSON },
-  { name: 'nagana', label: 'Nagana', emoji: '⚠️', group: 'Dyscyplina', description: 'Nadaje oficjalną naganę do akt.', fields: [...PERSON, f('ktora_nagana', 'Która nagana', 'text', { max: 20, placeholder: 'np. 1/3' })] },
+  { name: 'nagana', label: 'Nagana', emoji: '⚠️', group: 'Dyscyplina', description: 'Nadaje oficjalną naganę do akt.', fields: [...PERSON, f('ktora_nagana', 'Która nagana', 'select', { options: [['1/3', '1/3'], ['2/3', '2/3'], ['3/3', '3/3']] })] },
   { name: 'kara_finansowa', label: 'Kara finansowa', emoji: '💸', group: 'Dyscyplina', description: 'Nakłada karę finansową na osobę.', fields: [...PERSON, f('kwota', 'Kwota ($)', 'number', { min: 1, max: 1000000000 })] },
   { name: 'szkolenie', label: 'Szkolenie', emoji: '🎓', group: 'Szkolenia', description: 'Dokumentuje wynik szkolenia lub egzaminu.', fields: [
     f('kto_zdawal', 'Kto zdawał (użytkownik Discord)', 'user'), f('imie_nazwisko', 'Imię i nazwisko', 'text', { max: 100 }),
-    f('szkolenie', 'Nazwa szkolenia', 'text', { max: 100 }), f('szkoleniowiec', 'Szkoleniowiec (użytkownik Discord)', 'user'),
-    f('wynik', 'Wynik', 'select', { options: [['zdane', 'Zdane'], ['niezdane', 'Niezdane']] })] },
+    f('szkolenie', 'Nazwa szkolenia', 'select', {options: [['NEG', 'NEG'], ['SV', 'SV'], ['PWC', 'PWC'], ['MERY', 'MERY'], ['OCEAN', 'OCEAN'], ['SEU', 'SEU'], ['ASU', 'ASU'], ['LW', 'LW'], ['MED', 'MED'], ['JPAT', 'JPAT']] }), f('szkoleniowiec', 'Szkoleniowiec (użytkownik Discord)', 'user'),
+    f('wynik', 'Wynik', 'select', { options: [['zdane', '✅ Zdane'], ['niezdane', '❌ Niezdane']] })] },
   { name: 'zagrozenie', label: 'Wprowadź zagrożenie', emoji: '🚨', group: 'Ogłoszenia', description: 'Wprowadza stan zagrożenia na serwerze.', fields: [
     f('poziom', 'Poziom zagrożenia', 'select', { options: [['Zielony', 'Zielony'], ['Pomarańczowy', 'Pomarańczowy'], ['Czerwony', 'Czerwony'], ['Czarny', 'Czarny']] }),
-    f('wprowadzajacy', 'Osoba wprowadzająca', 'text', { max: 100 }), f('stopien_wprowadzajacego', 'Stopień osoby wprowadzającej', 'text', { max: 100 }), f('powod', 'Powód', 'text', { max: 500 })] },
+    f('wprowadzajacy', 'Osoba wprowadzająca', 'user'), f('stopien_wprowadzajacego', 'Stopień osoby wprowadzającej', 'role'), f('powod', 'Powód', 'text', { max: 500 })] },
   { name: 'odwolaj_zagrozenie', label: 'Odwołaj zagrożenie', emoji: '✅', group: 'Ogłoszenia', description: 'Przywraca normalny stan funkcjonowania serwera.', fields: [
-    f('osoba_odwolujaca', 'Osoba odwołująca', 'text', { max: 100 }), f('stopien_odwolujacego', 'Stopień osoby odwołującej', 'text', { max: 100 }), f('powod', 'Powód', 'text', { max: 500 })] },
+    f('osoba_odwolujaca', 'Osoba odwołująca', 'user'), f('stopien_odwolujacego', 'Stopień osoby odwołującej', 'role'), f('powod', 'Powód', 'text', { max: 500 })] },
   { name: 'zebranie', label: 'Zebranie', emoji: '📣', group: 'Ogłoszenia', description: 'Ogłasza zebranie departamentu (oznacza rolę z konfiguracji).', fields: [
     f('data', 'Data', 'date'), f('godzina', 'Godzina', 'time'), f('miejsce', 'Miejsce zebrania', 'text', { max: 200 })] },
   { name: 'dodaj_pojazd', label: 'Dodaj pojazd', emoji: '🚓', group: 'Pojazdy', description: 'Rejestruje pojazd i przesyła dane do arkusza Google.', fields: [
