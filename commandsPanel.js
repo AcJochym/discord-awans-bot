@@ -4,6 +4,25 @@ import { discordRequest } from './shared.js';
 import { COMMAND_DEFS, channelKeyFor, getCommandDef, runFactionCommand, validateCommandInput } from './commands.js';
 import { staffRoleIds } from './staff.js';
 
+// Stopnie dostępne w /awans i /degradacja (kolejność = hierarchia). Własną listę można ustawić w konfiguracji serwera: RANK_ROLE_IDS.
+const DEFAULT_RANK_ROLES = {
+  '1344364720605499442': [
+    '1381734918064832634', // Chief Of Police
+    '1344365855563190313', // Assistant Chief Of Police
+    '1344367095424614550', // Commander
+    '1344367652851683530', // Captain
+    '1344368020830814271', // Lieutenant
+    '1344368260082307174', // Sergeant II
+    '1344368586151563314', // Sergeant
+    '1519781307792756736', // Sekretarka
+    '1344368776233095209', // Police Officer III+1
+    '1344369080240443483', // Police Officer III
+    '1344369418440020029', // Police Officer II
+    '1344369742177239121', // Police Officer I
+    '1344370056481603657' // Recruit
+  ]
+};
+
 const ALLOWED_GROUPS = ['high_command', 'command', 'medium_command', 'command_ftd'];
 const caches = new Map();
 
@@ -33,6 +52,59 @@ function memberView(guildId, m) {
       ? `https://cdn.discordapp.com/guilds/${guildId}/users/${u.id}/avatars/${m.avatar}.png?size=64`
       : u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : defaultAvatar(u.id)
   };
+}
+
+// Role-stopnie dla danego serwera: lista z konfiguracji/domyślna (w kolejności hierarchii) albo — gdy jej brak — wszystkie zwykłe role
+function rankRoles(cfg, guildId, allRoles) {
+  const usable = allRoles.filter((r) => r.id !== guildId && !r.managed);
+  const configured = (Array.isArray(cfg.RANK_ROLE_IDS) ? cfg.RANK_ROLE_IDS : DEFAULT_RANK_ROLES[guildId] || []).map(String).filter((id) => /^\d{5,25}$/.test(id));
+  if (!configured.length) return usable.sort((a, b) => b.position - a.position);
+  const byId = new Map(usable.map((r) => [r.id, r]));
+  return configured.map((id) => byId.get(id)).filter(Boolean);
+}
+
+// ───────── Wyszukiwarka członków ─────────
+// Discord szuka tylko po początku nicku, więc "[109] Aiden Walker" nie znajdzie się po "Aiden" ani "109".
+// Dlatego pobieramy listę członków (cache 2 min) i szukamy sami: dowolny fragment, wiele słów, bez polskich znaków i nawiasów.
+const norm = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/gi, 'l').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+async function loadDirectory(guildId) {
+  const out = [];
+  let after = '0';
+  for (let i = 0; i < 10; i += 1) {
+    const page = await discordRequest('GET', `/guilds/${guildId}/members?limit=1000&after=${after}`);
+    out.push(...page);
+    if (page.length < 1000) break;
+    after = page[page.length - 1].user.id;
+  }
+  return out.filter((m) => m.user && !m.user.bot).map((m) => {
+    const view = memberView(guildId, m);
+    const hay = norm([m.nick, m.user.global_name, m.user.username].filter(Boolean).join(' '));
+    return { view, hay, words: hay.split(' '), primary: norm(view.name) };
+  });
+}
+
+export function searchDirectory(directory, query) {
+  const raw = String(query || '').trim();
+  const tokens = norm(raw).split(' ').filter(Boolean);
+  if (!tokens.length) return [];
+  const byId = /^\d{5,}$/.test(raw);
+  const scored = [];
+  for (const entry of directory) {
+    if (byId && entry.view.id.startsWith(raw)) { scored.push([100, entry]); continue; }
+    let score = 0;
+    let matches = true;
+    for (const token of tokens) {
+      if (entry.words.includes(token)) score += 4;                          // całe słowo
+      else if (entry.words.some((word) => word.startsWith(token))) score += 3; // początek słowa
+      else if (entry.hay.includes(token)) score += 1;                       // fragment w środku
+      else { matches = false; break; }
+    }
+    if (!matches) continue;
+    if (entry.primary.startsWith(tokens.join(' '))) score += 2;
+    scored.push([score, entry]);
+  }
+  return scored.sort((a, b) => b[0] - a[0] || a[1].view.name.localeCompare(b[1].view.name, 'pl')).slice(0, 8).map(([, entry]) => entry.view);
 }
 
 export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwnerId, deps, express }) {
@@ -70,8 +142,15 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
       const guildId = (guilds.find((g) => g.id === requested) || guilds.find((g) => g.id === DEFAULT_GUILD) || guilds[0]).id;
       const cfg = serverConfigs[guildId];
 
-      const roles = (await getRoles(guildId)).filter((r) => r.id !== guildId && !r.managed).sort((a, b) => b.position - a.position)
-        .map((r) => ({ id: r.id, name: r.name, color: hex(r.color) }));
+      const roles = rankRoles(cfg, guildId, await getRoles(guildId)).map((r) => ({ id: r.id, name: r.name, color: hex(r.color) }));
+
+      // Dane zalogowanej osoby — do automatycznego wypełnienia pól „osoba wprowadzająca" i jej stopnia
+      let me = null;
+      const self = await getMember(guildId, req.dashUser.id).catch(() => null);
+      if (self?.user) {
+        const hasRankList = Array.isArray(cfg.RANK_ROLE_IDS) || Boolean(DEFAULT_RANK_ROLES[guildId]);
+        me = { ...memberView(guildId, self), rankRoleId: hasRankList ? roles.find((r) => self.roles.includes(r.id))?.id || null : null };
+      }
 
       const commands = await Promise.all(COMMAND_DEFS.map(async (def) => {
         const channelId = cfg.CHANNELS?.[channelKeyFor(def.name)];
@@ -79,7 +158,7 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
         return { ...def, configured, channelName: configured ? await getChannelName(channelId) : null };
       }));
       const groups = [...new Set(commands.map((c) => c.group))].map((label) => ({ label, commands: commands.filter((c) => c.group === label) }));
-      res.json({ ok: true, guilds, guildId, groups, roles });
+      res.json({ ok: true, guilds, guildId, groups, roles, me });
     } catch (error) {
       console.error('[panel komendy] lista:', error.message);
       res.status(502).json({ ok: false, error: 'Nie udało się wczytać komend.' });
@@ -92,6 +171,11 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
     if (!(await canRunIn(req.dashUser, guildId))) return res.status(403).json({ ok: false, error: 'forbidden' });
     if (q.length < 2) return res.json({ ok: true, members: [] });
     try {
+      try {
+        return res.json({ ok: true, members: searchDirectory(await memo(`dir:${guildId}`, 120_000, () => loadDirectory(guildId)), q) });
+      } catch (listError) {
+        console.error('[panel komendy] lista członków niedostępna, szukam po początku nicku:', listError.message);
+      }
       const found = await memo(`s:${guildId}:${q.toLowerCase()}`, 20_000, () => discordRequest('GET', `/guilds/${guildId}/members/search?query=${encodeURIComponent(q)}&limit=8`));
       res.json({ ok: true, members: found.filter((m) => m.user && !m.user.bot).map((m) => memberView(guildId, m)) });
     } catch (error) {
@@ -108,7 +192,7 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
     if (!(await canRunIn(req.dashUser, guildId))) return res.status(403).json({ ok: false, error: 'Nie masz uprawnień do wysyłania komend na tym serwerze.' });
 
     try {
-      const roleIds = new Set((await getRoles(guildId)).filter((r) => r.id !== guildId).map((r) => r.id));
+      const roleIds = new Set(rankRoles(serverConfigs[guildId], guildId, await getRoles(guildId)).map((r) => r.id));
       const { opts, errors } = validateCommandInput(def, body.values, { roleIds });
       for (const field of def.fields.filter((x) => x.type === 'user' && opts[x.key])) {
         if (!(await getMember(guildId, opts[field.key]))) errors.push({ field: field.key, message: 'Nie znaleziono tego użytkownika na serwerze.' });
