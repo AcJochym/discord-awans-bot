@@ -2159,6 +2159,7 @@
         cmdEl('cmdGroups').replaceChildren(...cmd.data.groups.map((group) => {
           const section = document.createElement('section');
           section.className = 'cmd-group';
+          section.dataset.group = group.label;
           const title = document.createElement('h3');
           title.textContent = group.label;
           const grid = document.createElement('div');
@@ -2170,7 +2171,8 @@
             button.style.setProperty('--i', index++);
             button.disabled = !c.configured;
             button.title = c.configured ? c.description : 'Kanał docelowy tej komendy nie jest skonfigurowany na tym serwerze.';
-            button.innerHTML = `<span class="cmd-emoji">${esc(c.emoji)}</span><span class="cmd-name">/${esc(c.name)}</span><span class="cmd-label">${esc(c.label)}</span><span class="cmd-sub">${esc(c.configured ? (c.channelName ? `#${c.channelName}` : 'kanał ustawiony') : 'brak kanału w konfiguracji')}</span>`;
+            const channel = c.configured ? (c.channelName || 'kanał ustawiony') : 'brak kanału w konfiguracji';
+            button.innerHTML = `<span class="cmd-icon">${esc(c.emoji)}</span><span class="cmd-name">/${esc(c.name).replace(/_/g, '_<wbr>')}</span><span class="cmd-label">${esc(c.label)}</span><span class="cmd-chan">${c.configured ? '<i>#</i>' : '<i>!</i>'}<span>${esc(channel)}</span></span>`;
             button.addEventListener('click', () => openCommand(c));
             grid.appendChild(button);
           });
