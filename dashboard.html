@@ -2202,6 +2202,12 @@
       }
 
       // Wybór użytkownika z podpowiedziami (wyszukiwanie członków serwera)
+      const cmdHighlight = (text, query) => {
+        const tokens = String(query).split(/[\s\[\]]+/).filter(Boolean).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        if (!tokens.length) return esc(text);
+        return String(text).split(new RegExp(`(${tokens.join('|')})`, 'ig')).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join('');
+      };
+
       function buildUserPicker(field, wrap) {
         const input = document.createElement('input');
         input.type = 'text';
@@ -2241,6 +2247,11 @@
           if (q.length < 2) { closeList(); return; }
           timer = setTimeout(async () => {
             const mine = ++seq;
+            if (list.hidden) {
+              list.replaceChildren(Object.assign(document.createElement('li'), { className: 'none', textContent: 'Szukam…' }));
+              list.hidden = false;
+              input.setAttribute('aria-expanded', 'true');
+            }
             try {
               const data = await (await apiFetch(`/api/commands/members?guild=${encodeURIComponent(cmd.guild)}&q=${encodeURIComponent(q)}`)).json();
               if (mine !== seq) return;
@@ -2248,7 +2259,7 @@
               list.replaceChildren(...(items.length ? items.map((m) => {
                 const li = document.createElement('li');
                 li.setAttribute('role', 'option');
-                li.innerHTML = `<img src="${esc(m.avatarUrl)}" alt="" /><span><strong>${esc(m.name)}</strong> <span class="muted">@${esc(m.username)}</span></span>`;
+                li.innerHTML = `<img src="${esc(m.avatarUrl)}" alt="" /><span><strong>${cmdHighlight(m.name, q)}</strong> <span class="muted">@${cmdHighlight(m.username, q)}</span></span>`;
                 li.addEventListener('mousedown', (e) => { e.preventDefault(); choose(m); });
                 return li;
               }) : [Object.assign(document.createElement('li'), { className: 'none', textContent: data.ok ? 'Nie znaleziono nikogo o takiej nazwie.' : (data.error || 'Błąd wyszukiwania.') })]));
@@ -2256,10 +2267,11 @@
               list.hidden = false;
               input.setAttribute('aria-expanded', 'true');
             } catch (_) { /* pomijamy */ }
-          }, 250);
+          }, 180);
         });
         input.addEventListener('keydown', (e) => {
           if (list.hidden || !items.length) return;
+          if (e.key === 'Enter' && active < 0 && items.length === 1) { e.preventDefault(); choose(items[0]); return; }
           if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
           else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
           else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(items[active]); }
@@ -2267,6 +2279,7 @@
         });
         input.addEventListener('blur', () => setTimeout(closeList, 120));
         wrap.append(input, chip, list);
+        if (field.prefill === 'self' && cmd.data.me) choose(cmd.data.me);   // domyślnie ty — możesz zmienić
       }
 
       function buildCommandField(field) {
@@ -2296,6 +2309,10 @@
             input.appendChild(new Option('— wybierz —', ''));
             const options = field.type === 'role' ? cmd.data.roles.map((r) => [r.id, r.name]) : field.options;
             options.forEach(([value, text]) => input.appendChild(new Option(text, value)));
+            if (field.prefill === 'selfRank' && cmd.data.me?.rankRoleId && options.some(([value]) => value === cmd.data.me.rankRoleId)) {
+              input.value = cmd.data.me.rankRoleId;
+              cmd.values[field.key] = input.value;
+            }
           } else {
             input = document.createElement('input');
             input.type = field.type === 'date' ? 'date' : field.type === 'time' ? 'time' : 'text';
