@@ -863,25 +863,54 @@ body.modal-open { overflow: hidden; }
 }
 
 /* Komendy */
-.cmd-panel { padding: 22px 24px 26px; }
-.cmd-group h3 { margin: 22px 0 10px; font: 600 1.05rem var(--display); letter-spacing: 0.03em; color: var(--muted); }
-.cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.cmd-panel { padding: 22px 24px 28px; }
+.cmd-group { --accent: #7cc4ff; margin-top: 26px; }
+.cmd-group:first-child { margin-top: 8px; }
+.cmd-group[data-group="Kadry"] { --accent: #7cc4ff; }
+.cmd-group[data-group="Dyscyplina"] { --accent: #ff8f8f; }
+.cmd-group[data-group="Szkolenia"] { --accent: #6ee7b7; }
+.cmd-group[data-group="Ogłoszenia"] { --accent: #fcd34d; }
+.cmd-group[data-group="Pojazdy"] { --accent: #c4a8ff; }
+.cmd-group h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font: 600 1.1rem var(--display); letter-spacing: 0.04em; color: var(--text); }
+.cmd-group h3::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+.cmd-group h3::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(255, 255, 255, 0.22), transparent); }
+.cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+
 .cmd-btn {
-  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 16px 16px 14px; text-align: left;
-  border: 1px solid var(--edge); border-radius: 18px; color: var(--text); cursor: pointer; font: inherit;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  position: relative; overflow: hidden; isolation: isolate;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-height: 168px; padding: 16px 16px 14px; text-align: left;
+  border: 1px solid var(--edge); border-radius: 20px; color: var(--text); cursor: pointer; font: inherit;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 60%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 10px 24px rgba(2, 6, 23, 0.25);
   animation: rise 0.45s calc(var(--i, 0) * 40ms) cubic-bezier(.2, .8, .2, 1) both;
-  transition: transform 0.25s cubic-bezier(.2, .8, .2, 1), border-color 0.25s, box-shadow 0.25s, background 0.25s;
+  transition: transform 0.28s cubic-bezier(.2, .8, .2, 1), border-color 0.28s, box-shadow 0.28s, background 0.28s;
 }
-.cmd-btn:hover:not(:disabled) { transform: translateY(-3px); border-color: rgba(190, 228, 255, 0.6); background: linear-gradient(145deg, rgba(124, 196, 255, 0.28), rgba(255, 255, 255, 0.05)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 14px 28px rgba(2, 6, 23, 0.4); }
-.cmd-btn:active:not(:disabled) { transform: scale(0.97); }
+.cmd-btn::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; z-index: 1; background: linear-gradient(90deg, var(--accent), transparent 75%); opacity: 0.85; transition: opacity 0.28s, height 0.28s; }
+.cmd-btn::after { content: ""; position: absolute; z-index: -1; right: -40px; top: -40px; width: 140px; height: 140px; border-radius: 50%; background: radial-gradient(circle, var(--accent), transparent 68%); opacity: 0.16; transition: opacity 0.35s, transform 0.35s; }
+.cmd-btn:hover:not(:disabled) { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 65%, white 10%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 18px 34px rgba(2, 6, 23, 0.45), 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.cmd-btn:hover:not(:disabled)::before { opacity: 1; height: 4px; }
+.cmd-btn:hover:not(:disabled)::after { opacity: 0.34; transform: scale(1.15); }
+.cmd-btn:active:not(:disabled) { transform: translateY(-1px) scale(0.98); }
 .cmd-btn:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
-.cmd-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.cmd-emoji { font-size: 1.7rem; line-height: 1.1; }
-.cmd-name { font: 700 1.2rem var(--display); letter-spacing: 0.02em; }
-.cmd-label { font-size: 0.9rem; }
-.cmd-sub { color: var(--muted); font-size: 0.74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.cmd-btn:disabled { cursor: not-allowed; opacity: 0.5; border-style: dashed; filter: saturate(0.4); }
+.cmd-btn:disabled::before { opacity: 0.25; }
+
+.cmd-icon {
+  display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 8px; border-radius: 14px; font-size: 1.55rem; line-height: 1;
+  background: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.06)); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 14px rgba(2, 6, 23, 0.3);
+  transition: transform 0.3s cubic-bezier(.3, 1.5, .5, 1);
+}
+.cmd-btn:hover:not(:disabled) .cmd-icon { transform: scale(1.1) rotate(-6deg); }
+.cmd-name { font: 700 1.14rem/1.15 var(--display); letter-spacing: 0.02em; overflow-wrap: anywhere; }
+.cmd-label { color: var(--muted); font-size: 0.86rem; line-height: 1.3; }
+.cmd-chan {
+  display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: auto; padding: 5px 10px; width: fit-content; max-width: 100%;
+  border-radius: 999px; font-size: 0.74rem; color: var(--muted); background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.cmd-chan i { font-style: normal; font-weight: 700; color: var(--accent); }
+.cmd-chan span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmd-btn:disabled .cmd-chan { border-style: dashed; }
 
 .cmd-modal { width: min(600px, 100%); }
 .cmd-form { padding: 28px 28px 24px; }
@@ -939,4 +968,4 @@ body.modal-open { overflow: hidden; }
 .cmd-submit:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
 .cmd-submit.sending span::after { content: ""; display: inline-block; width: 12px; height: 12px; margin-left: 8px; vertical-align: -1px; border: 2px solid rgba(255, 255, 255, 0.4); border-top-color: #fff; border-radius: 50%; animation: cmdspin 0.7s linear infinite; }
 @keyframes cmdspin { to { transform: rotate(360deg); } }
-@media (max-width: 560px) { .cmd-fields { grid-template-columns: 1fr; } .cmd-field.half { grid-column: 1 / -1; } .cmd-form { padding: 22px 18px 18px; } .cmd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .cmd-fields { grid-template-columns: 1fr; } .cmd-field.half { grid-column: 1 / -1; } .cmd-form { padding: 22px 18px 18px; } .cmd-grid { grid-template-columns: 1fr; } }
