@@ -7,6 +7,8 @@ import { discordRequest, fetch, isId, snowTime } from './shared.js';
 import { securityHeaders, serveHtml, rateLimit, sameOrigin, errorHandler } from './security.js';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
+import { runFactionCommand } from './commands.js';
+import { registerCommandRoutes } from './commandsPanel.js';
 import { broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
@@ -732,6 +734,13 @@ function parseSuspensionReturnDate(value) {
   return target.toISOString().slice(0, 10);
 }
 
+// Funkcje bota wstrzykiwane do wspólnej logiki komend (Discord i panel używają tego samego kodu)
+const commandDeps = {
+  sendChannelMessage, sendDM, sendToGoogleSheet, addRoleToMember, getRoleName, getGuildInfo, sendWebhookLog,
+  addDashboardLog, saveAbsence, todayInWarsaw, parseSuspensionReturnDate,
+  registerPendingUrlop: (messageId, userId) => { pendingUrlopMessages.add(messageId); usersWithPendingUrlop.add(userId); }
+};
+
 function embedFieldValue(description, label) {
   return new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n]+)`).exec(String(description || ''))?.[1]?.trim() || '';
 }
@@ -819,7 +828,7 @@ async function userHasDashboardAccess(userId) {
 
 const dashboardTabCache = new Map();
 const DASHBOARD_TAB_CACHE_MS = 60_000;
-const ALL_DASHBOARD_TABS = ['home', 'overview', 'servers', 'logs', 'tickets', 'absences'];
+const ALL_DASHBOARD_TABS = ['home', 'overview', 'servers', 'logs', 'commands', 'tickets', 'absences'];
 
 async function dashboardTabsFor(userId) {
   if (BOT_OWNER_ID && userId === BOT_OWNER_ID) return [...ALL_DASHBOARD_TABS, 'config'];
@@ -852,7 +861,7 @@ async function dashboardTabsFor(userId) {
   const tabs = rank === 3
     ? [...ALL_DASHBOARD_TABS]
     : rank === 2
-      ? ['home', 'overview', 'servers', 'tickets', 'absences']
+      ? ['home', 'overview', 'servers', 'commands', 'tickets', 'absences']
       : rank === 1
         ? ['home', 'tickets', 'absences']
         : ['home'];
@@ -882,7 +891,7 @@ function pushDashboardEvent(type, user) {
 }
 
 async function requireDashboardAuth(req, res, next) {
-  const isApi = req.path.startsWith('/api/');
+  const isApi = req.originalUrl.startsWith('/api/');   // originalUrl: w app.use('/api/…') req.path jest bez prefiksu
   const deny = (code) => (isApi ? res.status(401).json({ ok: false, error: 'unauthorized' }) : res.redirect(`/login${code ? `?error=${code}` : ''}`));
   if (!DASH_AUTH_READY) return isApi ? res.status(503).json({ ok: false, error: 'auth_not_configured' }) : res.redirect('/login?error=config');
 
@@ -998,6 +1007,7 @@ app.use('/api/servers', requireDashboardAuth, requireDashboardTab('servers'));
 app.use('/api/logs', requireDashboardAuth, requireDashboardTab('logs'));
 app.use('/api/tickets', requireDashboardAuth, requireDashboardTab('tickets'));
 app.use('/api/absences', requireDashboardAuth, requireDashboardTab('absences'));
+app.use('/api/commands', requireDashboardAuth, requireDashboardTab('commands'));
 
 app.get('/api/state', requireDashboardAuth, async (req, res) => {
   res.json({ ok: true, state: await getUserState(req.dashUser.id) });
@@ -1265,6 +1275,7 @@ app.get('/api/staff', requireDashboardAuth, async (req, res) => {
   }
 });
 
+registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, deps: commandDeps, express });
 registerTicketRoutes(app, { requireDashboardAuth, serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, addDashboardLog, express });
 
 app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
@@ -1702,253 +1713,13 @@ app.post('/interactions', verifyKeyMiddleware(process.env.DISCORD_PUBLIC_KEY), a
       return;
     }
 
-    // Mapowanie komend na kanały z configu danego serwera
-    const configs = {
-      awans: { title: 'AWANS', color: 3066993, channel: guildConfig.CHANNELS.AWANS },
-      degradacja: { title: 'DEGRADACJA', color: 15158332, channel: guildConfig.CHANNELS.DEGRADACJA },
-      zawieszenie: { title: 'ZAWIESZENIE', color: 16753920, channel: guildConfig.CHANNELS.ZAWIESZENIE },
-      zagrozenie: { title: 'WPROWADZONO POZIOM ZAGROŻENIA', color: 16776960, channel: guildConfig.CHANNELS.ZAGROZENIE },
-      odwolaj_zagrozenie: { title: 'ODWOŁANO STAN ZAGROŻENIA', color: 5763719, channel: guildConfig.CHANNELS.ZAGROZENIE },
-      szkolenie: { title: 'SZKOLENIE', color: 3447003, channel: guildConfig.CHANNELS.SZKOLENIE },
-      urlop: { title: 'URLOP OCZEKUJE NA AKCEPTACJE', color: 16753920, channel: guildConfig.CHANNELS.URLOP },
-      zwolnij: { title: 'ZWOLNIENIE', color: 15158332, channel: guildConfig.CHANNELS.ZWOLNIENIA },
-      nagana: { title: 'NAGANA', color: 16711680, channel: guildConfig.CHANNELS.NAGANA },
-      zebranie: { title: 'ZEBRANIE', color: 5793266, channel: guildConfig.CHANNELS.ZEBRANIE },
-      dodaj_pojazd: { title: 'NOWY POJAZD W BAZIE', color: 3447003, channel: guildConfig.CHANNELS.POJAZDY },
-      kara_finansowa: { title: 'KARA FINANSOWA', color: 16766720, channel: guildConfig.CHANNELS.KARY }
-    };
-
-    const cfg = configs[name];
-    if (!cfg) return res.status(400).json({ error: 'Unknown command' });
-
-    if (!cfg.channel || cfg.channel === "ID" || cfg.channel === "ID_KANALU") {
-      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: "❌ Kanał docelowy dla tej komendy nie jest skonfigurowany na tym serwerze. Skontaktuj się z właścicielem bota.", flags: 64 } });
-    }
-
-    const now = new Date();
-    const data = `${now.toLocaleDateString("pl-PL", { timeZone: "Europe/Warsaw" })} ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}`;
-
-    let description = "", content = opts.kto ? `<@${opts.kto}>` : "", components = [];
-    let finalColor = cfg.color;
-
-    // Pobierz informacje o guildzie (dla DM-ów)
-    const guildInfo = await getGuildInfo(interaction.guild_id);
-    const guildName = guildInfo?.name || "Nieznany serwer";
-
-    // --- PRZYGOTOWANIE TREŚCI KOMEND ---
-    if (name === 'urlop') {
-      const dniLabel = dni === 1 ? "dzień" : "dni";
-      description = `**Rozpoczęcie:** ${opts.rozpoczecie}\n**Zakończenie:** ${opts.zakonczenie}\n**Czas:** ${dni} ${dniLabel}\n**Powód:** ${opts.powod}\n\n**Złożone przez:** <@${interaction.member.user.id}>\n**Data:** ${data}`;
-      components = [{ type: 1, components: [
-        { type: 2, label: "AKCEPTUJ", style: 3, custom_id: `urlop_accept_${interaction.member.user.id}` },
-        { type: 2, label: "ODRZUĆ", style: 4, custom_id: `urlop_reject_${interaction.member.user.id}` }
-      ]}];
-      
-      // Wyślij DM i zapisz do Google Sheets w tle (bez await)
-      sendDM(interaction.member.user.id, "✅ Twój wniosek urlopowy został przesłany i oczekuje na akceptację.")
-        .catch(e => console.error('Błąd wysyłania DM urlopu:', e));
-      
-      sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-        kto_id: interaction.member.user.id,
-        zakonczenie: opts.zakonczenie
-      }).catch(e => console.error('Błąd wysyłania urlopu do Google Sheets:', e));
-    }
-    else if (name === 'szkolenie') {
-      const isZdane = opts.wynik === 'zdane';
-      cfg.title = isZdane ? "Szkolenie Zdane" : "Szkolenie Niezdane";
-      finalColor = isZdane ? 5763719 : 15158332;
-      content = `<@${opts.kto_zdawal}>`;
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Szkolenie:** ${opts.szkolenie}\n**Szkoleniowiec:** <@${opts.szkoleniowiec}>\n\n**${data}**`;
-
-      // DM do osoby szkolonej (w tle)
-      if (opts.kto_zdawal) {
-        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Twoje szkolenie **${opts.szkolenie}** zostało **${opts.wynik}**!!!`;
-        sendDM(opts.kto_zdawal, dmMessage).catch(e => console.error('Błąd wysyłania DM szkolenia:', e));
-      }
-
-      if (isZdane) {
-        sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-          kto_id: opts.kto_zdawal,
-          szkolenie: opts.szkolenie
-        }).catch(e => console.error('Błąd wysyłania szkolenia do Google Sheets:', e));
-      }
-    }
-    else if (name === 'zagrozenie') {
-      if (opts.poziom) {
-        const colorMap = { 'Zielony': 5763719, 'Pomarańczowy': 16753920, 'Czerwony': 15158332, 'Czarny': 2303786 };
-        finalColor = colorMap[opts.poziom] || cfg.color;
-      }
-      cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
-      description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
-    }
-    else if (name === 'odwolaj_zagrozenie') {
-      finalColor = 5763719;
-      description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
-    }
-    else if (name === 'zawieszenie') {
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-
-      // DM do zawieszonej osoby (w tle)
-      if (opts.kto) {
-        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZAWIESZONY** na **${opts.czas}** z powodu **${opts.powod}**`;
-        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM zawieszenia:', e));
-
-        sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-          kto_id: opts.kto,
-          zawieszenie: true 
-        }).catch(e => console.error('Błąd wysyłania zawieszenia do Google Sheets:', e));
-
-        const zawieszanieRoleId = guildConfig.ROLES?.ZAWIESZENIE_ROLE_ID;
-        if (zawieszanieRoleId && zawieszanieRoleId !== "ID") {
-          addRoleToMember(interaction.guild_id, opts.kto, zawieszanieRoleId)
-            .catch(e => console.error('Błąd dodawania roli zawieszenia:', e));
-        }
-      }
-    }
-    else if (name === 'zwolnij') {
-      content = `<@${opts.kto}>`;
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-
-      // DM do zwolnionej osoby (w tle)
-      if (opts.kto) {
-        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZWOLNIONY** z powodu **${opts.powod}**`;
-        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM zwolnienia:', e));
-      }
-    }
-    else if (name === 'nagana') {
-      content = `<@${opts.kto}>`;
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Która nagana:** ${opts.ktora_nagana}\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-
-      sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-        kto_id: opts.kto,
-        nagana: opts.ktora_nagana
-      }).catch(e => console.error('Błąd wysyłania do Google Sheets:', e));
-      
-      // DM do ukaranej osoby (w tle)
-      if (opts.kto) {
-        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Została nałożona na ciebie **${opts.ktora_nagana}** **NAGANA** z powodu **${opts.powod}**`;
-        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM nagany:', e));
-      }
-    }
-    else if (name === 'kara_finansowa') {
-      content = `<@${opts.kto}>`;
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-    }
-    else if (name === 'dodaj_pojazd') {
-      const isTurbo = opts.turbo ? "TRUE" : "FALSE";
-      
-      description = `**Właściciel / Rejestrujący:** <@${interaction.member.user.id}>\n` +
-                    `**Tablica Rejestracyjna:** ${opts.tablica}\n` +
-                    `**Model pojazdu:** ${opts.model}\n` +
-                    `**Klasa pojazdu:** ${opts.klasa}\n` +
-                    `**Ważność przeglądu:** ${opts.przeglad}\n\n` +
-                    `🔧 **Modyfikacje (Tuning):**\n` +
-                    `> **Silnik:** ${opts.silnik}\n` +
-                    `> **Hamulce:** ${opts.hamulce}\n` +
-                    `> **Skrzynia biegów:** ${opts.skrzynia}\n` +
-                    `> **Zawieszenie:** ${opts.zawieszenie}\n` +
-                    `> **Turbo:** ${isTurbo}\n\n` +
-                    `**Data dodania do rejestru:** ${data}`;
-
-      sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, {
-        nowy_pojazd: true,
-        tablica: opts.tablica,
-        model: opts.model,
-        klasa: opts.klasa,
-        przeglad: opts.przeglad,
-        silnik: opts.silnik,
-        hamulce: opts.hamulce,
-        skrzynia: opts.skrzynia,
-        zawieszenie: opts.zawieszenie,
-        turbo: isTurbo
-      }).catch(e => console.error('Błąd wysyłania pojazdu do Google Sheets:', e));
-    }
-    else if (name === 'awans') {
-      content = `<@${opts.kto}>`;
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Awansowany przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-
-      // DM do awansowanej osoby (w tle)
-      if (opts.kto) {
-        const roleName = await getRoleName(interaction.guild_id, opts.stopien);
-        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **AWANSOWANY** na **${roleName}** z powodu **${opts.powod}** twój nowy numer odznaki to: ${opts.odznaka}`;
-        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM awansu:', e));
-      }
-    }
-    else if (name === 'degradacja') {
-      content = `<@${opts.kto}>`;
-      description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**Zdegradowany przez:** <@${interaction.member.user.id}>\n\n**${data}**`;
-
-      // DM do zdegradowanej osoby (w tle)
-      if (opts.kto) {
-        const roleName = await getRoleName(interaction.guild_id, opts.stopien);
-        const dmMessage = `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZDEGRADOWANY** na **${roleName}** z powodu **${opts.powod}** twój nowy numer odznaki to: ${opts.odznaka}`;
-        sendDM(opts.kto, dmMessage).catch(e => console.error('Błąd wysyłania DM degradacji:', e));
-      }
-    }
-    else if (name === 'zebranie') {
-      const roleId = guildConfig.PING_ROLE_ID;
-      const pingMention = (roleId && roleId !== "ID") ? `<@&${roleId}>` : "";
-      content = pingMention || "";
-
-      description = `**ZEBRANIE DEPARTAMENTU** ${pingMention}\n` +
-                    `**Data:** ${opts.data}\n` +
-                    `**Godzina:** ${opts.godzina}\n` +
-                    `**Miejsce Zebrania:** ${opts.miejsce}\n\n` +
-                    `*Dziś o ${now.toLocaleTimeString("pl-PL", { timeZone: "Europe/Warsaw", hour: '2-digit', minute: '2-digit' })}*`;
-    }
-
-    // ✅ WSPÓLNE WYSYŁANIE DLA WSZYSTKICH KOMEND (RAZ!)
-    const sentMessage = await sendChannelMessage(cfg.channel, { content, embeds: [{ title: cfg.title, color: finalColor, description }], components });
-
-    if (!sentMessage) {
-      return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `⚠️ Komenda ${name} przetworzona, ale wystąpił błąd przy wysyłaniu wiadomości na kanał docelowy. Sprawdź uprawnienia bota i konfigurację kanału.`, flags: 64 } });
-    }
-
-    // Rejestracja wniosku urlopowego jako oczekujący
-    if (name === 'urlop' && sentMessage.id) {
-      pendingUrlopMessages.add(sentMessage.id);
-      usersWithPendingUrlop.add(interaction.member.user.id);
-    }
-
-    if (name === 'zawieszenie' && opts.kto && sentMessage.id) {
-      try {
-        await saveAbsence({
-          id: sentMessage.id, guildId: interaction.guild_id, userId: opts.kto,
-          displayName: opts.imie_nazwisko || opts.kto, kind: 'suspension', reason: opts.powod,
-          startsOn: todayInWarsaw(), returnsOn: parseSuspensionReturnDate(opts.czas)
-        });
-      } catch (error) {
-        console.error('Nie udało się zapisać zawieszenia:', error.message);
-      }
-    }
-
-    // --- LOGOWANIE UŻYCIA KOMENDY (W TLE) ---
-    let opcjeTekst = "";
-    if (Object.keys(opts).length > 0) {
-      for (const [key, value] of Object.entries(opts)) {
-        opcjeTekst += `**${key}:** ${value}\n`;
-      }
-    } else {
-      opcjeTekst = "Brak argumentów.";
-    }
-
-    sendWebhookLog(guildConfig.WEBHOOK_URL, {
-      title: `🛠️ Użyto komendy: /${name}`,
-      color: 3447003,
-      description: `**Użytkownik:** <@${interaction.member.user.id}>\n**Kanał:** <#${interaction.channel_id}>\n\n**Przekazane dane:**\n${opcjeTekst}`,
-      timestamp: new Date().toISOString()
-    }).catch(e => console.error('Błąd logowania komendy:', e));
-
-    addDashboardLog('info', `Użyto komendy /${name} na serwerze ${interaction.guild_id}.`, {
-      guildId: interaction.guild_id,
-      source: 'server',
-      command: name,
-      userId: interaction.member.user.id,
-      channelId: interaction.channel_id,
-      options: opts
-    });
-
-    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `✅ Komenda ${name} wykonana!`, flags: 64 } });
+    // Cała logika komend (embedy, DM, arkusz, role, logi) jest we wspólnym module commands.js
+    const result = await runFactionCommand(name, opts, {
+      guildId: interaction.guild_id, guildConfig, userId: interaction.member.user.id,
+      channelId: interaction.channel_id, dni, via: 'discord'
+    }, commandDeps);
+    if (result.unknown) return res.status(400).json({ error: 'Unknown command' });
+    return res.json({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: result.message, flags: 64 } });
   }
 
   // Fallback dla nieznanych typów interakcji
