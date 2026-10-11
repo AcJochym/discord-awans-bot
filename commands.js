@@ -40,7 +40,7 @@ export const COMMAND_DEFS = [
     f('szkolenie', 'Nazwa szkolenia', 'select', {options: [['NEG', 'NEG'], ['SV', 'SV'], ['PWC', 'PWC'], ['MERY', 'MERY'], ['OCEAN', 'OCEAN'], ['SEU', 'SEU'], ['ASU', 'ASU'], ['LW', 'LW'], ['MED', 'MED'], ['JPAT', 'JPAT']] }), f('szkoleniowiec', 'Szkoleniowiec (użytkownik Discord)', 'user'),
     f('wynik', 'Wynik', 'select', { options: [['zdane', '✅ Zdane'], ['niezdane', '❌ Niezdane']] })] },
   { name: 'zagrozenie', label: 'Wprowadź zagrożenie', emoji: '🚨', group: 'Ogłoszenia', description: 'Wprowadza stan zagrożenia na serwerze.', fields: [
-    f('poziom', 'Poziom zagrożenia', 'select', { options: [['Zielony', ':green_square: Zielony'], ['Pomarańczowy', ':orange_square: Pomarańczowy'], ['Czerwony', ':red_square: Czerwony'], ['Czarny', ':black_square: Czarny']] }),
+    f('poziom', 'Poziom zagrożenia', 'select', { options: [['Zielony', '🟩 Zielony'], ['Pomarańczowy', '🟧 Pomarańczowy'], ['Czerwony', '🟥 Czerwony'], ['Czarny', '⬛ Czarny']] }),
     f('wprowadzajacy', 'Osoba wprowadzająca', 'user'), f('stopien_wprowadzajacego', 'Stopień osoby wprowadzającej', 'role'), f('powod', 'Powód', 'text', { max: 500 })] },
   { name: 'odwolaj_zagrozenie', label: 'Odwołaj zagrożenie', emoji: '✅', group: 'Ogłoszenia', description: 'Przywraca normalny stan funkcjonowania serwera.', fields: [
     f('osoba_odwolujaca', 'Osoba odwołująca', 'user'), f('stopien_odwolujacego', 'Stopień osoby odwołującej', 'role'), f('powod', 'Powód', 'text', { max: 500 })] },
