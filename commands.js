@@ -116,6 +116,9 @@ export function validateCommandInput(def, values = {}, { roleIds = new Set() } =
 // ───────── Wykonanie komendy ─────────
 // ctx: { guildId, guildConfig, userId, channelId, dni, via }
 // deps: funkcje bota (wysyłanie wiadomości, DM, arkusz, role, logi…) — wstrzykiwane, dzięki czemu logikę da się testować.
+// Z Discorda osobę wpisuje się jako tekst, a w panelu wybiera z listy (wtedy dostajemy samo ID) — ID zamieniamy na wzmiankę
+const person = (value) => (/^\d{5,25}$/.test(String(value)) ? `<@${value}>` : value);
+
 export async function runFactionCommand(name, opts, ctx, deps) {
   const { guildId, guildConfig, userId, channelId = null, dni, via = 'discord' } = ctx;
   const meta = META[name];
@@ -161,10 +164,10 @@ export async function runFactionCommand(name, opts, ctx, deps) {
       finalColor = colorMap[opts.poziom] || cfg.color;
     }
     cfg.title = `WPROWADZONO POZIOM ZAGROŻENIA "${opts.poziom}"`;
-    description = `**Osoba wprowadzająca:** ${opts.wprowadzajacy}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
+    description = `**Osoba wprowadzająca:** ${person(opts.wprowadzajacy)}\n**Stopień osoby wprowadzającej:** ${opts.stopien_wprowadzajacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
   } else if (name === 'odwolaj_zagrozenie') {
     finalColor = 5763719;
-    description = `**Osoba odwołująca:** ${opts.osoba_odwolujaca}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
+    description = `**Osoba odwołująca:** ${person(opts.osoba_odwolujaca)}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
   } else if (name === 'zawieszenie') {
     description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${userId}>\n\n**${data}**`;
     if (opts.kto) {
