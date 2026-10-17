@@ -2156,7 +2156,14 @@
 
       function renderCommandButtons() {
         let index = 0;
-        cmdEl('cmdGroups').replaceChildren(...cmd.data.groups.map((group) => {
+        const note = [];
+        if (cmd.data.limited) {
+          const info = document.createElement('p');
+          info.className = 'cmd-note';
+          info.textContent = `Twoja ranga ma dostęp do sekcji: ${cmd.data.access.join(', ')}.`;
+          note.push(info);
+        }
+        cmdEl('cmdGroups').replaceChildren(...note, ...cmd.data.groups.map((group) => {
           const section = document.createElement('section');
           section.className = 'cmd-group';
           section.dataset.group = group.label;
@@ -2289,7 +2296,7 @@
         const id = `cmd_${field.key}`;
         const label = document.createElement('label');
         label.htmlFor = id;
-        label.innerHTML = `${esc(field.label)}${field.required ? ' <span class="req" aria-hidden="true">*</span>' : ''}`;
+        label.innerHTML = `${esc(field.label)}${field.required || field.dependsOn ? ' <span class="req" aria-hidden="true">*</span>' : ''}`;
 
         if (field.type === 'bool') {
           const input = document.createElement('input');
@@ -2345,7 +2352,26 @@
         cmdEl('cmdDesc').textContent = c.description;
         const guildName = cmd.data.guilds.find((g) => g.id === cmd.guild)?.name || '';
         cmdEl('cmdTarget').textContent = `Wiadomość trafi na ${c.channelName ? `kanał #${c.channelName}` : 'skonfigurowany kanał'}${guildName ? ` • ${guildName}` : ''}.`;
-        cmdEl('cmdFields').replaceChildren(...c.fields.map(buildCommandField));
+        // Pola zależne (np. Nadane przez) są ukryte, dopóki nie zaznaczysz pola nadrzędnego (checkbox Wystaw przez kogoś innego)
+        const nodes = new Map(c.fields.map((field) => [field.key, buildCommandField(field)]));
+        cmdEl('cmdFields').replaceChildren(...nodes.values());
+        c.fields.filter((field) => field.dependsOn).forEach((field) => {
+          let place = nodes.get(field.key);
+          place.hidden = true;
+          const parent = nodes.get(field.dependsOn)?.querySelector('input[type=checkbox]');
+          parent?.addEventListener('change', () => {
+            if (parent.checked) {
+              place.hidden = false;
+              place.querySelector('input:not([type=checkbox]), select')?.focus();
+            } else {
+              const fresh = buildCommandField(field);   // czysty, ukryty formularz bez poprzedniego wyboru
+              fresh.hidden = true;
+              place.replaceWith(fresh);
+              place = fresh;
+              delete cmd.values[field.key];
+            }
+          });
+        });
         cmdSetStatus('', '');
         cmdEl('cmdSend').disabled = false;
         cmdModal.hidden = false;
@@ -2368,7 +2394,8 @@
         let missing = 0;
         cmd.current.fields.forEach((field) => {
           cmdFieldError(field.key, '');
-          if (field.required && !String(cmd.values[field.key] ?? '').trim()) { cmdFieldError(field.key, 'To pole jest wymagane.'); missing += 1; }
+          const active = !field.dependsOn || cmd.values[field.dependsOn] === true;
+          if (active && (field.required || field.dependsOn) && !String(cmd.values[field.key] ?? '').trim()) { cmdFieldError(field.key, 'To pole jest wymagane.'); missing += 1; }
         });
         if (missing) { cmdSetStatus('err', 'Uzupełnij wymagane pola.'); cmdEl('cmdFields').querySelector('.invalid input:not([hidden]), .invalid select')?.focus(); return; }
 
