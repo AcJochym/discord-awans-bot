@@ -1,5 +1,7 @@
 // Komendy frakcyjne: definicje pól (dla panelu) oraz wspólna logika wykonania — używana zarówno przez Discorda (/awans …), jak i przez panel.
 
+import { staffRoleIds } from './staff.js';
+
 const REQUIRED_MSG_CHANNEL = '❌ Kanał docelowy dla tej komendy nie jest skonfigurowany na tym serwerze. Skontaktuj się z właścicielem bota.';
 
 // Gdzie trafia wiadomość, tytuł i kolor embedu
@@ -53,6 +55,53 @@ export const COMMAND_DEFS = [
     f('zawieszenie', 'Zawieszenie', 'text', { max: 100 }), f('turbo', 'Turbo', 'bool', { required: false })] }
 ];
 
+// Wystawienie przez kogoś innego: checkbox + pole Nadane przez (osoba z listy, wzmianka w wiadomości) — w sekcjach Kadry i Dyscyplina
+for (const def of COMMAND_DEFS) {
+  if (def.group === 'Kadry' || def.group === 'Dyscyplina') {
+    def.fields.push(
+      f('inny_wystawiajacy', 'Wystaw przez kogoś innego', 'bool', { required: false, uiOnly: true }),
+      f('nadane_przez', 'Nadane przez', 'user', { required: false, dependsOn: 'inny_wystawiajacy', hint: 'Ta osoba pojawi się w wiadomości jako wystawiająca (wzmianka).' })
+    );
+  }
+}
+
+// ───────── Kto może używać których komend ─────────
+export const ALL_COMMAND_GROUPS = [...new Set(COMMAND_DEFS.map((def) => def.group))];
+const ACCESS_BY_RANK = {
+  high_command: 'all',
+  command: 'all',
+  secretary: 'all',
+  medium_command: ['Dyscyplina', 'Szkolenia', 'Ogłoszenia', 'Pojazdy'],
+  command_ftd: ['Szkolenia'],
+  ftd: ['Szkolenia']
+};
+const DEFAULT_SECRETARY_ROLES = { '1344364720605499442': ['1519781307792756736'] };   // Sekretarka; własne: SECRETARY_ROLE_IDS w konfiguracji serwera
+
+export function secretaryRoleIds(cfg = {}, guildId = '') {
+  const own = Array.isArray(cfg.SECRETARY_ROLE_IDS) ? cfg.SECRETARY_ROLE_IDS : DEFAULT_SECRETARY_ROLES[guildId] || [];
+  return own.map(String).filter((id) => /^\d{5,25}$/.test(id));
+}
+
+// Klucze rang (high_command, command, medium_command, command_ftd, ftd, secretary), które ma osoba z danymi rolami
+export function rankKeysFor(memberRoles = [], cfg = {}, guildId = '') {
+  const roles = new Set(memberRoles);
+  const groups = staffRoleIds(cfg, guildId);
+  const keys = Object.keys(groups).filter((key) => groups[key].some((id) => roles.has(id)));
+  if (secretaryRoleIds(cfg, guildId).some((id) => roles.has(id))) keys.push('secretary');
+  return keys;
+}
+
+// Zbiór sekcji komend dostępnych dla podanych rang (suma uprawnień)
+export function allowedCommandGroups(rankKeys = []) {
+  const allowed = new Set();
+  for (const key of rankKeys) {
+    const rule = ACCESS_BY_RANK[key];
+    if (rule === 'all') ALL_COMMAND_GROUPS.forEach((group) => allowed.add(group));
+    else (rule || []).forEach((group) => allowed.add(group));
+  }
+  return allowed;
+}
+
 export const getCommandDef = (name) => COMMAND_DEFS.find((def) => def.name === name) || null;
 
 // ───────── Walidacja danych z formularza ─────────
@@ -72,15 +121,18 @@ export function validateCommandInput(def, values = {}, { roleIds = new Set() } =
   const opts = {};
   const errors = [];
   for (const field of def.fields) {
+    // pole zależne (np. Nadane przez) obowiązuje tylko po zaznaczeniu pola nadrzędnego i wtedy jest wymagane
+    if (field.dependsOn && !(values[field.dependsOn] === true || values[field.dependsOn] === 'true')) continue;
+    const required = field.required || Boolean(field.dependsOn);
     const raw = values[field.key];
     const text = typeof raw === 'string' ? raw.trim() : raw == null ? '' : String(raw).trim();
     const fail = (message) => errors.push({ field: field.key, message });
 
     if (field.type === 'bool') {
-      if (raw === true || raw === 'true') opts[field.key] = true;
+      if ((raw === true || raw === 'true') && !field.uiOnly) opts[field.key] = true;
       continue;
     }
-    if (!text) { if (field.required) fail('To pole jest wymagane.'); continue; }
+    if (!text) { if (required) fail('To pole jest wymagane.'); continue; }
     if (CONTROL.test(text)) { fail('Niedozwolone znaki sterujące.'); continue; }
 
     switch (field.type) {
@@ -127,6 +179,7 @@ export async function runFactionCommand(name, opts, ctx, deps) {
   const cfg = { title: meta.title, color: meta.color, channel: guildConfig.CHANNELS?.[meta.channelKey] };
   if (!cfg.channel || cfg.channel === 'ID' || cfg.channel === 'ID_KANALU') return { ok: false, message: REQUIRED_MSG_CHANNEL };
 
+  const by = opts.nadane_przez || userId;   // wystawienie przez kogoś innego (panel); domyślnie osoba, która użyła komendy
   const now = new Date();
   const data = `${now.toLocaleDateString('pl-PL', { timeZone: 'Europe/Warsaw' })} ${now.toLocaleTimeString('pl-PL', { timeZone: 'Europe/Warsaw', hour: '2-digit', minute: '2-digit' })}`;
 
@@ -169,7 +222,7 @@ export async function runFactionCommand(name, opts, ctx, deps) {
     finalColor = 5763719;
     description = `**Osoba odwołująca:** ${person(opts.osoba_odwolujaca)}\n**Stopień osoby odwołującej:** ${opts.stopien_odwolujacego}\n**Powód:** ${opts.powod}\n**Data oraz godzina:** ${data}`;
   } else if (name === 'zawieszenie') {
-    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${userId}>\n\n**${data}**`;
+    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Czas zawieszenia:** ${opts.czas}\n**Zawieszono przez:** <@${by}>\n\n**${data}**`;
     if (opts.kto) {
       background(deps.sendDM(opts.kto, `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZAWIESZONY** na **${opts.czas}** z powodu **${opts.powod}**`), 'wysyłania DM zawieszenia');
       background(deps.sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, { kto_id: opts.kto, zawieszenie: true }), 'wysyłania zawieszenia do Google Sheets');
@@ -178,16 +231,16 @@ export async function runFactionCommand(name, opts, ctx, deps) {
     }
   } else if (name === 'zwolnij') {
     content = `<@${opts.kto}>`;
-    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nadane przez:** <@${userId}>\n\n**${data}**`;
+    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nadane przez:** <@${by}>\n\n**${data}**`;
     if (opts.kto) background(deps.sendDM(opts.kto, `**${guildName}** - **${opts.imie_nazwisko}** Zostałeś **ZWOLNIONY** z powodu **${opts.powod}**`), 'wysyłania DM zwolnienia');
   } else if (name === 'nagana') {
     content = `<@${opts.kto}>`;
-    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Która nagana:** ${opts.ktora_nagana}\n**Nadane przez:** <@${userId}>\n\n**${data}**`;
+    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Która nagana:** ${opts.ktora_nagana}\n**Nadane przez:** <@${by}>\n\n**${data}**`;
     background(deps.sendToGoogleSheet(guildConfig.GOOGLE_SHEET_WEBHOOK_URL, { kto_id: opts.kto, nagana: opts.ktora_nagana }), 'wysyłania do Google Sheets');
     if (opts.kto) background(deps.sendDM(opts.kto, `**${guildName}** - **${opts.imie_nazwisko}** Została nałożona na ciebie **${opts.ktora_nagana}** **NAGANA** z powodu **${opts.powod}**`), 'wysyłania DM nagany');
   } else if (name === 'kara_finansowa') {
     content = `<@${opts.kto}>`;
-    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${userId}>\n\n**${data}**`;
+    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Kwota:** ${opts.kwota}$\n**Nadane przez:** <@${by}>\n\n**${data}**`;
   } else if (name === 'dodaj_pojazd') {
     const isTurbo = opts.turbo ? 'TRUE' : 'FALSE';
     description = `**Właściciel / Rejestrujący:** <@${userId}>\n` +
@@ -201,7 +254,7 @@ export async function runFactionCommand(name, opts, ctx, deps) {
   } else if (name === 'awans' || name === 'degradacja') {
     const awans = name === 'awans';
     content = `<@${opts.kto}>`;
-    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**${awans ? 'Awansowany' : 'Zdegradowany'} przez:** <@${userId}>\n\n**${data}**`;
+    description = `**Kto:** ${opts.imie_nazwisko}\n**Powód:** ${opts.powod}\n**Nowy stopień:** ${opts.stopien}\n**Nowy numer odznaki:** ${opts.odznaka}\n**${awans ? 'Awansowany' : 'Zdegradowany'} przez:** <@${by}>\n\n**${data}**`;
     if (opts.kto) {
       const roleName = await deps.getRoleName(guildId, opts.stopien);
       const verb = awans ? 'AWANSOWANY' : 'ZDEGRADOWANY';
