@@ -971,5 +971,16 @@ body.modal-open { overflow: hidden; }
 @media (max-width: 560px) { .cmd-fields { grid-template-columns: 1fr; } .cmd-field.half { grid-column: 1 / -1; } .cmd-form { padding: 22px 18px 18px; } .cmd-grid { grid-template-columns: 1fr; } }
 .cmd-suggest mark { padding: 0 2px; border-radius: 4px; color: #fff; background: rgba(124, 196, 255, 0.4); }
 .cmd-suggest li strong { font-weight: 600; }
-.cmd-field[hidden] { display: none; }
-.cmd-note { margin: 0 0 6px; padding: 8px 12px; border-radius: 12px; font-size: 0.84rem; color: #cfe8ff; background: rgba(124, 196, 255, 0.12); border: 1px solid rgba(124, 196, 255, 0.3); }
+
+/* Zakładka SPAM */
+.spam-panel { display: flex; flex-direction: column; gap: 14px; }
+.spam-monitored { font-size: 0.85rem; }
+.spam-table .spam-preview { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted, #8b9db3); }
+.spam-table tr[data-id] { cursor: pointer; }
+.spam-table tr[data-id]:hover { background: rgba(124, 196, 255, 0.06); }
+.spam-detail { border-top: 1px solid rgba(124, 196, 255, 0.15); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.spam-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.spam-detail-body { display: flex; flex-direction: column; gap: 10px; font-size: 0.88rem; overflow-wrap: anywhere; }
+.spam-detail-body > div { display: flex; flex-direction: column; gap: 3px; }
+.spam-deleted { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: rgba(0, 0, 0, 0.25); font-size: 0.82rem; }
+.spam-detail-actions { display: flex; gap: 10px; }
