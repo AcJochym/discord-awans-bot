@@ -7,9 +7,10 @@ import { discordRequest, fetch, isId, snowTime } from './shared.js';
 import { securityHeaders, serveHtml, rateLimit, sameOrigin, errorHandler } from './security.js';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
-import { runFactionCommand, secretaryRoleIds } from './commands.js';
+import { runFactionCommand } from './commands.js';
 import { registerCommandRoutes } from './commandsPanel.js';
 import { broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
+import { onGuildMessage, ensureSpamNotices, startSpamJobs, registerSpamRoutes } from './spam.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
 const app = express();
@@ -304,6 +305,7 @@ discordClient.on('messageUpdate', (_old, message) => { if (message.channel) sign
 discordClient.on('messageDelete', (message) => { if (message.channel) signalTicket(message.channel, 'message'); });
 
 discordClient.on('messageCreate', async message => {
+  if (message.guildId) onGuildMessage(message, spamCtx).catch((error) => console.error('[spam] obsługa wiadomości:', error));
   if (message.guildId && message.channel?.topic?.startsWith('ticket|')) {
     broadcastTicketGatewayMessage(message).catch((error) => console.error('Błąd SSE ticketu:', error.message));
   }
@@ -434,11 +436,11 @@ async function getGuildInfo(guildId, withCounts = false) {
 // Funkcja do pobrania nazwy roli z mentiona lub ID
 async function getRoleName(guildId, roleInput) {
   if (!roleInput) return roleInput;
-  
+
   // Jeśli to mention roli <@&ROLE_ID>
   const roleIdMatch = roleInput.match(/<@&(\d+)>/);
   const roleId = roleIdMatch ? roleIdMatch[1] : roleInput;
-  
+
   try {
     const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles`, {
       headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
@@ -741,6 +743,9 @@ const commandDeps = {
   registerPendingUrlop: (messageId, userId) => { pendingUrlopMessages.add(messageId); usersWithPendingUrlop.add(userId); }
 };
 
+// Kontekst systemu antyspamowego (spam.js)
+const spamCtx = { serverConfigs, botOwnerId: BOT_OWNER_ID, deps: { ...commandDeps, discordClient } };
+
 function embedFieldValue(description, label) {
   return new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n]+)`).exec(String(description || ''))?.[1]?.trim() || '';
 }
@@ -828,7 +833,7 @@ async function userHasDashboardAccess(userId) {
 
 const dashboardTabCache = new Map();
 const DASHBOARD_TAB_CACHE_MS = 60_000;
-const ALL_DASHBOARD_TABS = ['home', 'overview', 'servers', 'logs', 'commands', 'tickets', 'absences'];
+const ALL_DASHBOARD_TABS = ['home', 'overview', 'servers', 'logs', 'commands', 'tickets', 'absences', 'spam'];
 
 async function dashboardTabsFor(userId) {
   if (BOT_OWNER_ID && userId === BOT_OWNER_ID) return [...ALL_DASHBOARD_TABS, 'config'];
@@ -836,7 +841,6 @@ async function dashboardTabsFor(userId) {
   if (cached && cached.expiresAt > Date.now()) return cached.tabs;
 
   let rank = 0;
-  let secretary = false;
   for (const [guildId, config] of Object.entries(serverConfigs)) {
     try {
       const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
@@ -847,7 +851,6 @@ async function dashboardTabsFor(userId) {
       const memberRoles = new Set(member.roles || []);
       const roleGroups = staffRoleIds(config, guildId);
       const hasAny = (group) => (roleGroups[group] || []).some((roleId) => memberRoles.has(roleId));
-      if (secretaryRoleIds(config, guildId).some((roleId) => memberRoles.has(roleId))) secretary = true;
 
       if (hasAny('high_command') || hasAny('command') || hasAny('command_ftd')) {
         rank = 3;
@@ -863,11 +866,10 @@ async function dashboardTabsFor(userId) {
   const tabs = rank === 3
     ? [...ALL_DASHBOARD_TABS]
     : rank === 2
-      ? ['home', 'overview', 'servers', 'commands', 'tickets', 'absences']
+      ? ['home', 'overview', 'servers', 'commands', 'tickets', 'absences', 'spam']
       : rank === 1
-        ? ['home', 'commands', 'tickets', 'absences']
+        ? ['home', 'tickets', 'absences']
         : ['home'];
-  if (secretary && !tabs.includes('commands')) tabs.push('commands');   // Sekretarka: wszystkie komendy (reszta zakładek bez zmian)
   dashboardTabCache.set(userId, { tabs, expiresAt: Date.now() + DASHBOARD_TAB_CACHE_MS });
   return tabs;
 }
@@ -1011,6 +1013,7 @@ app.use('/api/logs', requireDashboardAuth, requireDashboardTab('logs'));
 app.use('/api/tickets', requireDashboardAuth, requireDashboardTab('tickets'));
 app.use('/api/absences', requireDashboardAuth, requireDashboardTab('absences'));
 app.use('/api/commands', requireDashboardAuth, requireDashboardTab('commands'));
+app.use('/api/spam', requireDashboardAuth, requireDashboardTab('spam'));
 
 app.get('/api/state', requireDashboardAuth, async (req, res) => {
   res.json({ ok: true, state: await getUserState(req.dashUser.id) });
@@ -1280,6 +1283,7 @@ app.get('/api/staff', requireDashboardAuth, async (req, res) => {
 
 registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, deps: commandDeps, express });
 registerTicketRoutes(app, { requireDashboardAuth, serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, addDashboardLog, express });
+registerSpamRoutes(app, { serverConfigs, getGuildInfo, addDashboardLog });
 
 app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   try {
@@ -1777,6 +1781,8 @@ async function startServer() {
   if (storageMode() === 'postgres') onDatabaseReady(() => {}); else onDatabaseReady(() => loadSavedServerConfigs());
   processAbsenceReturnReminders();
   setInterval(processAbsenceReturnReminders, 60 * 1000).unref();
+  startSpamJobs(spamCtx);
+  setTimeout(() => ensureSpamNotices(spamCtx).catch((error) => console.error('[spam] ostrzeżenia:', error)), 15_000).unref();
   httpServer = app.listen(SERVER_PORT, '0.0.0.0', () => {
     console.log(`🤖 Bot działa na porcie ${SERVER_PORT}`);
     addDashboardLog('info', `Bot uruchomiony na porcie ${SERVER_PORT}.`, { source: 'bot' });
