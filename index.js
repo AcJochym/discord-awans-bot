@@ -7,7 +7,7 @@ import { discordRequest, fetch, isId, snowTime } from './shared.js';
 import { securityHeaders, serveHtml, rateLimit, sameOrigin, errorHandler } from './security.js';
 import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
-import { runFactionCommand } from './commands.js';
+import { runFactionCommand, secretaryRoleIds } from './commands.js';
 import { registerCommandRoutes } from './commandsPanel.js';
 import { broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
@@ -836,6 +836,7 @@ async function dashboardTabsFor(userId) {
   if (cached && cached.expiresAt > Date.now()) return cached.tabs;
 
   let rank = 0;
+  let secretary = false;
   for (const [guildId, config] of Object.entries(serverConfigs)) {
     try {
       const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
@@ -846,6 +847,7 @@ async function dashboardTabsFor(userId) {
       const memberRoles = new Set(member.roles || []);
       const roleGroups = staffRoleIds(config, guildId);
       const hasAny = (group) => (roleGroups[group] || []).some((roleId) => memberRoles.has(roleId));
+      if (secretaryRoleIds(config, guildId).some((roleId) => memberRoles.has(roleId))) secretary = true;
 
       if (hasAny('high_command') || hasAny('command') || hasAny('command_ftd')) {
         rank = 3;
@@ -863,8 +865,9 @@ async function dashboardTabsFor(userId) {
     : rank === 2
       ? ['home', 'overview', 'servers', 'commands', 'tickets', 'absences']
       : rank === 1
-        ? ['home', 'tickets', 'absences']
+        ? ['home', 'commands', 'tickets', 'absences']
         : ['home'];
+  if (secretary && !tabs.includes('commands')) tabs.push('commands');   // Sekretarka: wszystkie komendy (reszta zakładek bez zmian)
   dashboardTabCache.set(userId, { tabs, expiresAt: Date.now() + DASHBOARD_TAB_CACHE_MS });
   return tabs;
 }
