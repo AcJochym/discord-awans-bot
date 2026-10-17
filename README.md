@@ -63,4 +63,4 @@ Osadzanie linków, Załączanie plików, Czytanie historii wiadomości. Wymagany
 Stan ticketu jest trzymany w temacie kanału (`ticket|ownerId|typ|open/closed`), więc nie potrzeba bazy danych.
 
 Dziękujemy za korzystanie z bota i życzymy miłego administrowania serwerem! 🚀
-Jeśli chcesz, możemy w przyszłości rozbudować go o dodatkowe moduły, automatyzacje i lepsze integracje.
+Jeśli chcesz, możemy w przyszłości rozbudować go o dodatkowe moduły, automatyzacje i lepsze integracje..
