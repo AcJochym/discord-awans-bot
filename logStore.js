@@ -25,6 +25,7 @@ let persistenceQueue = Promise.resolve();
 
 export const storageMode = () => (ready ? 'postgres' : 'memory');
 export const storageDetails = () => ({ mode: storageMode(), configured: Boolean(pool), queued: pending.length + unsyncedArchives.size + unsyncedAbsences.size });
+export const getPool = () => pool;
 export function onDatabaseReady(fn) {
   readyListeners.push(fn);
   if (ready) Promise.resolve().then(fn).catch((e) => console.error('onDatabaseReady:', e.message));
