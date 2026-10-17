@@ -1,8 +1,7 @@
 // Panel komend: lista komend z formularzami, wyszukiwarka członków i wykonanie komendy z poziomu strony.
 // Dostęp: High Command, Command, Medium Command i Command FTD (sprawdzane na wybranym serwerze) + właściciel bota.
 import { discordRequest } from './shared.js';
-import { COMMAND_DEFS, channelKeyFor, getCommandDef, runFactionCommand, validateCommandInput } from './commands.js';
-import { staffRoleIds } from './staff.js';
+import { ALL_COMMAND_GROUPS, COMMAND_DEFS, allowedCommandGroups, channelKeyFor, getCommandDef, rankKeysFor, runFactionCommand, validateCommandInput } from './commands.js';
 
 // Stopnie dostępne w /awans i /degradacja (kolejność = hierarchia). Własną listę można ustawić w konfiguracji serwera: RANK_ROLE_IDS.
 const DEFAULT_RANK_ROLES = {
@@ -23,7 +22,6 @@ const DEFAULT_RANK_ROLES = {
   ]
 };
 
-const ALLOWED_GROUPS = ['high_command', 'command', 'medium_command', 'command_ftd'];
 const caches = new Map();
 
 function memo(key, ttl, fn) {
@@ -111,20 +109,21 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
   const DEFAULT_GUILD = (process.env.STAFF_GUILD_ID || '1344364720605499442').trim();
   const lastRun = new Map();
 
-  async function canRunIn(user, guildId) {
-    if (botOwnerId && user.id === botOwnerId) return true;
+  // Sekcje komend dostępne dla użytkownika na danym serwerze (puste = brak dostępu). Zależą od rangi na Discordzie.
+  async function groupsFor(user, guildId) {
+    if (botOwnerId && user.id === botOwnerId) return new Set(ALL_COMMAND_GROUPS);
     const cfg = serverConfigs[guildId];
-    if (!cfg) return false;
+    if (!cfg) return new Set();
     try {
       const member = await getMember(guildId, user.id);
-      if (!member) return false;
-      const groups = staffRoleIds(cfg, guildId);
-      return ALLOWED_GROUPS.some((g) => (groups[g] || []).some((id) => member.roles.includes(id)));
+      return member ? allowedCommandGroups(rankKeysFor(member.roles, cfg, guildId)) : new Set();
     } catch (error) {
       console.error('[panel komendy] sprawdzanie roli:', error.message);
-      return false;
+      return new Set();
     }
   }
+
+  const canRunIn = async (user, guildId) => (await groupsFor(user, guildId)).size > 0;
 
   async function allowedGuilds(user) {
     const found = [];
@@ -137,10 +136,11 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
   app.get('/api/commands', async (req, res) => {
     try {
       const guilds = await allowedGuilds(req.dashUser);
-      if (!guilds.length) return res.status(403).json({ ok: false, error: 'Komendy są dostępne dla High Command, Command, Medium Command i Command FTD.' });
+      if (!guilds.length) return res.status(403).json({ ok: false, error: 'Twoja ranga nie ma dostępu do komend.' });
       const requested = String(req.query.guild || '');
       const guildId = (guilds.find((g) => g.id === requested) || guilds.find((g) => g.id === DEFAULT_GUILD) || guilds[0]).id;
       const cfg = serverConfigs[guildId];
+      const allowed = await groupsFor(req.dashUser, guildId);
 
       const roles = rankRoles(cfg, guildId, await getRoles(guildId)).map((r) => ({ id: r.id, name: r.name, color: hex(r.color) }));
 
@@ -152,13 +152,13 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
         me = { ...memberView(guildId, self), rankRoleId: hasRankList ? roles.find((r) => self.roles.includes(r.id))?.id || null : null };
       }
 
-      const commands = await Promise.all(COMMAND_DEFS.map(async (def) => {
+      const commands = await Promise.all(COMMAND_DEFS.filter((def) => allowed.has(def.group)).map(async (def) => {
         const channelId = cfg.CHANNELS?.[channelKeyFor(def.name)];
         const configured = Boolean(channelId) && !['ID', 'ID_KANALU'].includes(channelId);
         return { ...def, configured, channelName: configured ? await getChannelName(channelId) : null };
       }));
       const groups = [...new Set(commands.map((c) => c.group))].map((label) => ({ label, commands: commands.filter((c) => c.group === label) }));
-      res.json({ ok: true, guilds, guildId, groups, roles, me });
+      res.json({ ok: true, guilds, guildId, groups, roles, me, access: [...allowed], limited: allowed.size < ALL_COMMAND_GROUPS.length });
     } catch (error) {
       console.error('[panel komendy] lista:', error.message);
       res.status(502).json({ ok: false, error: 'Nie udało się wczytać komend.' });
@@ -189,7 +189,9 @@ export function registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwn
     const guildId = String(body.guild || '');
     const def = getCommandDef(String(body.command || ''));
     if (!def || !serverConfigs[guildId]) return res.status(400).json({ ok: false, error: 'Nieznana komenda lub serwer.' });
-    if (!(await canRunIn(req.dashUser, guildId))) return res.status(403).json({ ok: false, error: 'Nie masz uprawnień do wysyłania komend na tym serwerze.' });
+    const allowedGroups = await groupsFor(req.dashUser, guildId);
+    if (!allowedGroups.size) return res.status(403).json({ ok: false, error: 'Nie masz uprawnień do wysyłania komend na tym serwerze.' });
+    if (!allowedGroups.has(def.group)) return res.status(403).json({ ok: false, error: `Twoja ranga nie ma dostępu do komend z sekcji „${def.group}”.` });
 
     try {
       const roleIds = new Set(rankRoles(serverConfigs[guildId], guildId, await getRoles(guildId)).map((r) => r.id));
