@@ -972,15 +972,69 @@ body.modal-open { overflow: hidden; }
 .cmd-suggest mark { padding: 0 2px; border-radius: 4px; color: #fff; background: rgba(124, 196, 255, 0.4); }
 .cmd-suggest li strong { font-weight: 600; }
 
-/* Zakładka SPAM */
-.spam-panel { display: flex; flex-direction: column; gap: 14px; }
-.spam-monitored { font-size: 0.85rem; }
-.spam-table .spam-preview { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted, #8b9db3); }
-.spam-table tr[data-id] { cursor: pointer; }
-.spam-table tr[data-id]:hover { background: rgba(124, 196, 255, 0.06); }
-.spam-detail { border-top: 1px solid rgba(124, 196, 255, 0.15); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+/* Zakładka SPAM — spójna z panelem logów */
+.spam-panel { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+.spam-panel .panel-header { align-items: flex-end; flex-wrap: wrap; }
+.spam-panel .panel-header > div { margin-right: auto; }
+.spam-panel .panel-header p { margin: 4px 0 0; }
+.spam-panel .chips { align-self: center; }
+.spam-panel .filter-label { margin: 0 6px 0 18px; }
+.spam-panel #spamGuild { min-width: 220px; padding: 8px 12px; border: 1px solid var(--edge); border-radius: 10px; background: rgba(255, 255, 255, 0.08); color: var(--text); color-scheme: dark; font: 500 0.9rem var(--body); }
+.spam-panel #spamGuild option { background: #14213a; }
+.spam-panel #spamGuild:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.spam-monitored {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0; padding: 10px 14px; font-size: 0.85rem; color: var(--muted);
+  border: 1px dashed var(--edge); border-radius: 12px; background: rgba(255, 255, 255, 0.03);
+}
+.spam-monitored strong { color: var(--text); font-weight: 600; }
+.spam-channel-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 11px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+  border: 1px solid var(--edge); background: var(--glass-in); color: var(--text);
+}
+.spam-channel-pill::before { content: "#"; color: var(--blue); font-weight: 700; }
+
+.spam-table { min-width: 880px; }
+.spam-table .spam-preview {
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: 0.84rem;
+}
+.spam-table tr[data-id] { cursor: pointer; transition: background 0.2s; }
+.spam-table tr[data-id]:hover { background: rgba(124, 196, 255, 0.07); }
+.spam-table tr[data-id]:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.spam-table tr.selected { background: rgba(124, 196, 255, 0.12); box-shadow: inset 3px 0 0 var(--blue); }
+
+.spam-status { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.spam-status.quarantined { color: var(--amber); background: rgba(252, 211, 77, 0.14); border: 1px solid rgba(252, 211, 77, 0.35); }
+.spam-status.banned { color: var(--red); background: rgba(255, 143, 143, 0.14); border: 1px solid rgba(255, 143, 143, 0.35); }
+.spam-status.unblocked { color: var(--green); background: rgba(110, 231, 183, 0.14); border: 1px solid rgba(110, 231, 183, 0.35); }
+
+.spam-detail {
+  border: 1px solid var(--edge); border-radius: 12px;
+  background: rgba(3, 9, 22, 0.45);
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;
+  animation: rise 0.35s cubic-bezier(.2, .8, .2, 1) both;
+}
 .spam-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.spam-detail-head strong { font: 700 1.15rem var(--display); letter-spacing: 0.02em; }
 .spam-detail-body { display: flex; flex-direction: column; gap: 10px; font-size: 0.88rem; overflow-wrap: anywhere; }
 .spam-detail-body > div { display: flex; flex-direction: column; gap: 3px; }
-.spam-deleted { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: rgba(0, 0, 0, 0.25); font-size: 0.82rem; }
-.spam-detail-actions { display: flex; gap: 10px; }
+.spam-detail-key { color: var(--muted); font-size: 0.78rem; }
+.spam-deleted {
+  max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border-radius: 10px; font-size: 0.82rem;
+  border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(0, 0, 0, 0.25);
+}
+.spam-deleted > div { padding: 8px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); border-left: 3px solid var(--edge); }
+.spam-deleted > div.level-flag { border-left-color: var(--red); }
+.spam-deleted time { color: var(--muted); font-size: 0.74rem; display: block; margin-bottom: 2px; }
+.spam-detail-actions { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 4px; border-top: 1px solid var(--edge); }
+
+@media (max-width: 560px) {
+  .spam-panel { padding: 18px 16px; }
+  .spam-panel .panel-header { align-items: stretch; flex-direction: column; }
+  .spam-panel .chips { align-self: flex-start; }
+  .spam-detail-actions button { flex: 1; }
+}
