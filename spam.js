@@ -4,7 +4,9 @@
 import { UserError, discordRequest, isId, snowTime } from './shared.js';
 import { getPool, onDatabaseReady } from './logStore.js';
 import { staffRoleIds } from './staff.js';
-import { secretaryRoleIds } from './commands.js';
+
+// Rol­a sekretarki (nigdy nie karana) — stała dla serwera LSPD, nadpisywana przez SPAM_EXEMPT_ROLE_IDS w konfiguracji
+const SECRETARY_ROLE_IDS = ['1519781307792756736'];
 
 // Kanały-pułapki (można nadpisać w konfiguracji serwera: SPAM_CHANNEL_IDS; wyjątki rolowe: SPAM_EXEMPT_ROLE_IDS)
 const DEFAULT_SPAM_CHANNELS = ['1560984351825592341', '1560984427939496076'];   // LSPD midway.gg, FTD
@@ -35,7 +37,7 @@ export function isExempt({ userId, guildId, roleIds = [], isAdmin = false, guild
   if (userId === botOwnerId || userId === guildOwnerId || isAdmin) return true;
   const exempt = new Set([
     ...(cfg.REQUIRED_ROLE_IDS || []), ...Object.values(staffRoleIds(cfg, guildId)).flat(),
-    ...secretaryRoleIds(cfg, guildId), ...(cfg.SPAM_EXEMPT_ROLE_IDS || [])
+    ...SECRETARY_ROLE_IDS, ...(cfg.SPAM_EXEMPT_ROLE_IDS || [])
   ].map(String));
   return roleIds.some((id) => exempt.has(String(id)));
 }
