@@ -59,6 +59,7 @@
         <button class="tab" data-tab="commands" hidden>Komendy</button>
         <button class="tab" data-tab="tickets" hidden>Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
         <button class="tab" data-tab="absences" hidden>Urlopy i zawieszenia</button>
+        <button class="tab" data-tab="spam" hidden>SPAM<span id="spamBadge" class="tab-badge" hidden></span></button>
         <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
@@ -274,6 +275,43 @@
               <thead><tr><th>Osoba</th><th>Rodzaj</th><th>Status</th><th>Od</th><th>Powrót</th><th>Powód</th><th>Serwer</th></tr></thead>
               <tbody id="absenceRows"><tr><td colspan="7" class="muted">Ładowanie…</td></tr></tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="spamTab" class="tab-panel">
+        <div class="glass-card spam-panel">
+          <div class="panel-header">
+            <div>
+              <h2>SPAM — kanały-pułapki</h2>
+              <p class="muted">Każda wiadomość zwykłego użytkownika na monitorowanym kanale = wyciszenie i usunięcie wiadomości z ostatnich 5 minut. Decyzja: Perm ban albo Odblokuj.</p>
+            </div>
+            <div class="chips" id="spamState" role="group" aria-label="Status">
+              <button type="button" data-v="quarantined" aria-pressed="true">Wyciszeni</button>
+              <button type="button" data-v="banned" aria-pressed="false">Bany</button>
+              <button type="button" data-v="unblocked" aria-pressed="false">Odblokowani</button>
+              <button type="button" data-v="all" aria-pressed="false">Wszyscy</button>
+            </div>
+            <label class="filter-label" for="spamGuild">Serwer</label>
+            <select id="spamGuild" aria-label="Serwer"></select>
+          </div>
+          <div class="spam-monitored muted" id="spamMonitored" role="status"></div>
+          <div class="absence-table-wrap">
+            <table class="absence-table spam-table">
+              <thead><tr><th>Osoba</th><th>Kanał</th><th>Powody</th><th>Treść</th><th>Wyciszenie do</th><th>Usunięte</th><th>Status</th></tr></thead>
+              <tbody id="spamRows"><tr><td colspan="7" class="muted">Ładowanie…</td></tr></tbody>
+            </table>
+          </div>
+          <div id="spamDetail" class="spam-detail" hidden>
+            <div class="spam-detail-head">
+              <strong id="spamDetailTitle"></strong>
+              <button type="button" id="spamDetailClose" class="ghost-btn">✕ Zamknij</button>
+            </div>
+            <div id="spamDetailBody" class="spam-detail-body"></div>
+            <div class="spam-detail-actions">
+              <button type="button" id="spamBan" class="ghost-btn danger-btn">🚫 Perm ban</button>
+              <button type="button" id="spamUnblock" class="ghost-btn">✅ Odblokuj</button>
+            </div>
           </div>
         </div>
       </section>
@@ -540,6 +578,7 @@
         if (tabName === 'config') loadConfigTab();
         if (tabName === 'absences') loadAbsences();
         if (tabName === 'commands') loadCommands();
+        if (tabName === 'spam') loadSpam();
       }
 
       tabButtons.forEach((button) => {
@@ -2156,14 +2195,7 @@
 
       function renderCommandButtons() {
         let index = 0;
-        const note = [];
-        if (cmd.data.limited) {
-          const info = document.createElement('p');
-          info.className = 'cmd-note';
-          info.textContent = `Twoja ranga ma dostęp do sekcji: ${cmd.data.access.join(', ')}.`;
-          note.push(info);
-        }
-        cmdEl('cmdGroups').replaceChildren(...note, ...cmd.data.groups.map((group) => {
+        cmdEl('cmdGroups').replaceChildren(...cmd.data.groups.map((group) => {
           const section = document.createElement('section');
           section.className = 'cmd-group';
           section.dataset.group = group.label;
@@ -2296,7 +2328,7 @@
         const id = `cmd_${field.key}`;
         const label = document.createElement('label');
         label.htmlFor = id;
-        label.innerHTML = `${esc(field.label)}${field.required || field.dependsOn ? ' <span class="req" aria-hidden="true">*</span>' : ''}`;
+        label.innerHTML = `${esc(field.label)}${field.required ? ' <span class="req" aria-hidden="true">*</span>' : ''}`;
 
         if (field.type === 'bool') {
           const input = document.createElement('input');
@@ -2352,26 +2384,7 @@
         cmdEl('cmdDesc').textContent = c.description;
         const guildName = cmd.data.guilds.find((g) => g.id === cmd.guild)?.name || '';
         cmdEl('cmdTarget').textContent = `Wiadomość trafi na ${c.channelName ? `kanał #${c.channelName}` : 'skonfigurowany kanał'}${guildName ? ` • ${guildName}` : ''}.`;
-        // Pola zależne (np. Nadane przez) są ukryte, dopóki nie zaznaczysz pola nadrzędnego (checkbox Wystaw przez kogoś innego)
-        const nodes = new Map(c.fields.map((field) => [field.key, buildCommandField(field)]));
-        cmdEl('cmdFields').replaceChildren(...nodes.values());
-        c.fields.filter((field) => field.dependsOn).forEach((field) => {
-          let place = nodes.get(field.key);
-          place.hidden = true;
-          const parent = nodes.get(field.dependsOn)?.querySelector('input[type=checkbox]');
-          parent?.addEventListener('change', () => {
-            if (parent.checked) {
-              place.hidden = false;
-              place.querySelector('input:not([type=checkbox]), select')?.focus();
-            } else {
-              const fresh = buildCommandField(field);   // czysty, ukryty formularz bez poprzedniego wyboru
-              fresh.hidden = true;
-              place.replaceWith(fresh);
-              place = fresh;
-              delete cmd.values[field.key];
-            }
-          });
-        });
+        cmdEl('cmdFields').replaceChildren(...c.fields.map(buildCommandField));
         cmdSetStatus('', '');
         cmdEl('cmdSend').disabled = false;
         cmdModal.hidden = false;
@@ -2394,8 +2407,7 @@
         let missing = 0;
         cmd.current.fields.forEach((field) => {
           cmdFieldError(field.key, '');
-          const active = !field.dependsOn || cmd.values[field.dependsOn] === true;
-          if (active && (field.required || field.dependsOn) && !String(cmd.values[field.key] ?? '').trim()) { cmdFieldError(field.key, 'To pole jest wymagane.'); missing += 1; }
+          if (field.required && !String(cmd.values[field.key] ?? '').trim()) { cmdFieldError(field.key, 'To pole jest wymagane.'); missing += 1; }
         });
         if (missing) { cmdSetStatus('err', 'Uzupełnij wymagane pola.'); cmdEl('cmdFields').querySelector('.invalid input:not([hidden]), .invalid select')?.focus(); return; }
 
@@ -2454,6 +2466,114 @@
         } catch (_) { /* zostają ustawienia z localStorage */ }
       }
 
+      // ───── Zakładka SPAM ─────
+      const spam = { guild: '', state: 'quarantined', incidents: [], current: null, loaded: false };
+      const spEl = (id) => document.getElementById(id);
+      const REASON_LABELS = { trap: 'kanał-pułapka', invite: 'zaproszenie', link: 'link', mass_mention: 'masowa wzmianka', attachment: 'załącznik' };
+      const SPAM_STATUS = { quarantined: 'Wyciszony', banned: 'Perm ban', unblocked: 'Odblokowany' };
+      const SPAM_STATUS_CLASS = { quarantined: 'error', banned: 'error', unblocked: 'online' };
+
+      async function loadSpam() {
+        try {
+          const data = await (await apiFetch(`/api/spam${spam.guild ? `?guild=${encodeURIComponent(spam.guild)}` : ''}`)).json();
+          if (!data.ok) throw new Error(data.error || 'Błąd');
+          const sel = spEl('spamGuild');
+          if (!spam.loaded || sel.options.length !== data.guilds.length) {
+            sel.innerHTML = data.guilds.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
+            if (data.guilds.length) sel.value = data.guildId;
+          }
+          spam.guild = data.guildId || '';
+          spam.incidents = data.incidents;
+          spam.monitored = data.monitored;
+          spam.counts = data.counts;
+          spam.loaded = true;
+          renderSpam();
+        } catch (e) {
+          if (e.message !== 'unauthorized') spEl('spamRows').innerHTML = '<tr><td colspan="7" class="muted">Nie udało się wczytać listy.</td></tr>';
+        }
+      }
+
+      function renderSpam() {
+        const monitored = spEl('spamMonitored');
+        monitored.textContent = spam.monitored?.length ? `Monitorowane kanały: ${spam.monitored.map((c) => `#${c.name}`).join(', ')}` : 'Brak monitorowanych kanałów na tym serwerze.';
+        const badge = spEl('spamBadge');
+        const quar = spam.counts?.quarantined || 0;
+        badge.hidden = !quar;
+        badge.textContent = quar;
+        const rows = spam.incidents.filter((i) => spam.state === 'all' || i.status === spam.state);
+        const body = spEl('spamRows');
+        if (!rows.length) { body.innerHTML = `<tr><td colspan="7" class="muted">${spam.state === 'quarantined' ? 'Brak wyciszonych użytkowników.' : 'Brak wpisów.'}</td></tr>`; return; }
+        body.innerHTML = rows.map((i) => `
+          <tr data-id="${esc(i.id)}" role="button" tabindex="0">
+            <td><span class="tk-item-text"><strong>${esc(i.userName || i.userId)}</strong><span class="muted mono">${esc(i.userId)}</span></span></td>
+            <td>${i.channelName ? `#${esc(i.channelName)}` : '—'}</td>
+            <td>${(i.reasons || []).map((r) => `<span class="tiny-pill">${esc(REASON_LABELS[r] || r)}</span>`).join(' ')}</td>
+            <td class="spam-preview">${esc(i.preview || '—')}</td>
+            <td>${i.timeoutUntil ? esc(tkTime(i.timeoutUntil)) : '—'}</td>
+            <td>${i.deletedCount}</td>
+            <td><span class="tiny-pill ${SPAM_STATUS_CLASS[i.status] || ''}">${SPAM_STATUS[i.status] || esc(i.status)}</span></td>
+          </tr>`).join('');
+      }
+
+      async function openSpamDetail(id) {
+        let incident = spam.incidents.find((i) => i.id === id);
+        try {
+          const data = await (await apiFetch(`/api/spam/${encodeURIComponent(id)}`)).json();
+          if (data.ok) incident = data.incident;
+        } catch (_) { /* używamy wersji z listy */ }
+        if (!incident) return;
+        spam.current = incident;
+        spEl('spamDetailTitle').textContent = `${incident.userName || incident.userId} — ${SPAM_STATUS[incident.status] || incident.status}`;
+        const deleted = (incident.deleted || []);
+        spEl('spamDetailBody').innerHTML = `
+          <div><span class="mini-label">Powód zgłoszenia</span><div>${esc(incident.triggerContent || '—')}</div></div>
+          <div><span class="mini-label">Kanał</span><div>${incident.channelName ? `#${esc(incident.channelName)}` : esc(incident.channelId || '—')}</div></div>
+          <div><span class="mini-label">Zgłoszono</span><div>${esc(tkTime(incident.createdAt))}</div></div>
+          ${incident.resolvedBy ? `<div><span class="mini-label">Rozpatrzył</span><div>${esc(incident.resolvedBy)}${incident.resolvedAt ? ` — ${esc(tkTime(incident.resolvedAt))}` : ''}</div></div>` : ''}
+          ${incident.notes ? `<div><span class="mini-label">Notatki</span><div>${esc(incident.notes)}</div></div>` : ''}
+          ${deleted.length ? `<div><span class="mini-label">Usunięte wiadomości (${deleted.length}) — historia</span><div class="spam-deleted">${deleted.map((m) => `<div><span class="muted">#${esc(m.channelName || m.channelId || '?')} • ${esc(tkTime(m.ts))}${m.deleted ? '' : ' • NIE usunięto'}</span>${esc(m.content || '—')}</div>`).join('')}</div></div>` : ''}`;
+        const quarantined = incident.status === 'quarantined';
+        spEl('spamBan').disabled = !quarantined;
+        spEl('spamUnblock').disabled = !quarantined;
+        spEl('spamDetail').hidden = false;
+        spEl('spamDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      async function spamDecision(kind) {
+        if (!spam.current || spam.busy) return;
+        const incident = spam.current;
+        if (kind === 'ban' && !confirm(`Perm ban ${incident.userName || incident.userId}? Tej operacji nie można cofnąć.`)) return;
+        spam.busy = true;
+        spEl(kind === 'ban' ? 'spamBan' : 'spamUnblock').disabled = true;
+        try {
+          const data = await (await apiFetch(`/api/spam/${encodeURIComponent(incident.id)}/${kind}`, { method: 'POST' })).json();
+          if (!data.ok) throw new Error(data.error || 'Błąd');
+          spam.current = null;
+          spEl('spamDetail').hidden = true;
+          await loadSpam();
+        } catch (e) {
+          if (e.message !== 'unauthorized') alert(e.message || 'Nie udało się wykonać akcji.');
+        } finally {
+          spam.busy = false;
+          spEl('spamBan').disabled = false;
+          spEl('spamUnblock').disabled = false;
+        }
+      }
+
+      spEl('spamGuild').addEventListener('change', (e) => { spam.guild = e.target.value; loadSpam(); });
+      spEl('spamState').addEventListener('click', (e) => {
+        const button = e.target.closest('button[data-v]');
+        if (!button) return;
+        spam.state = button.dataset.v;
+        spEl('spamState').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b === button ? 'true' : 'false'));
+        renderSpam();
+      });
+      spEl('spamRows').addEventListener('click', (e) => { const row = e.target.closest('tr[data-id]'); if (row) openSpamDetail(row.dataset.id); });
+      spEl('spamRows').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const row = e.target.closest('tr[data-id]'); if (row) { e.preventDefault(); openSpamDetail(row.dataset.id); } } });
+      spEl('spamDetailClose').addEventListener('click', () => { spEl('spamDetail').hidden = true; spam.current = null; });
+      spEl('spamBan').addEventListener('click', () => spamDecision('ban'));
+      spEl('spamUnblock').addEventListener('click', () => spamDecision('unblock'));
+
       setActiveTab('home');
       loadUserState();
       loadStaff();
@@ -2464,6 +2584,7 @@
       loadMe().then(async () => {
         if (allowedTabs.has('tickets')) loadTickets();
         if (allowedTabs.has('logs')) reloadActivity();
+        if (allowedTabs.has('spam')) { loadSpam(); setInterval(() => { if (!document.hidden) loadSpam(); }, 30000); }
         await refreshDashboard();
         animateLists = false;
       });
