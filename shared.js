@@ -23,12 +23,16 @@ export const snowTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n);
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Zapytanie do API Discorda jako bot: limit czasu, ponawianie przy 429, błąd z polem .status
-export async function discordRequest(method, pathname, body, { timeout } = {}) {
+export async function discordRequest(method, pathname, body, { timeout, reason } = {}) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const res = await fetch(`https://discord.com/api/v10${pathname}`, {
       method,
       timeout,
-      headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: {
+        Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(reason ? { 'X-Audit-Log-Reason': encodeURIComponent(String(reason).slice(0, 400)) } : {})   // powód widoczny w dzienniku audytu serwera
+      },
       body: body ? JSON.stringify(body) : undefined
     });
     if (res.status === 429 && attempt < 2) {
