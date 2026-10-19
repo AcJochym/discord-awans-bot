@@ -15,6 +15,19 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const BLOCKED_EXT = /\.(exe|bat|cmd|com|scr|msi|vbs|ps1|jar|js|lnk|dll)$/i;
 const ticketEventClients = new Set();
 
+// Zdarzenie dla otwartych kart panelu (np. nowy spam). allow(client) decyduje, kto je dostaje (np. kto ma daną zakładkę)
+export async function broadcastPanelEvent(name, payload, allow = async () => true) {
+  const encoded = `event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`;
+  await Promise.all([...ticketEventClients].map(async (client) => {
+    if (client.res.writableEnded || client.res.destroyed) { ticketEventClients.delete(client); return; }
+    try {
+      if (await allow(client)) client.res.write(encoded);
+    } catch (error) {
+      console.error(`[SSE panel] ${name}:`, error.message);
+    }
+  }));
+}
+
 const hexColor = (n) => (n ? `#${Number(n).toString(16).padStart(6, '0')}` : null);
 const safeUrl = (u) => (typeof u === 'string' && /^https:\/\//i.test(u) && u.length < 2000 ? u : null);
 const isVerifiedApplicationBot = (user) => Boolean(user?.bot && (
