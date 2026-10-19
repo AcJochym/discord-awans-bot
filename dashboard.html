@@ -281,38 +281,28 @@
 
       <section id="spamTab" class="tab-panel">
         <div class="glass-card spam-panel">
-          <div class="panel-header">
-            <div>
+          <div class="spam-hero">
+            <span class="spam-shield" aria-hidden="true">🛡️</span>
+            <div class="spam-hero-text">
               <h2>SPAM — kanały-pułapki</h2>
-              <p class="muted">Każda wiadomość zwykłego użytkownika na monitorowanym kanale = wyciszenie i usunięcie wiadomości z ostatnich 5 minut. Decyzja: Perm ban albo Odblokuj.</p>
+              <p>Każda wiadomość zwykłego użytkownika na monitorowanym kanale = wyciszenie na maksymalny czas i usunięcie jego wiadomości z ostatnich 5 minut. Tutaj decydujesz: <strong>Perm ban</strong> albo <strong>Odblokuj</strong>.</p>
             </div>
+            <label id="spamGuildWrap" class="spam-guild" for="spamGuild" hidden>
+              <span>Serwer</span>
+              <select id="spamGuild" aria-label="Serwer"></select>
+            </label>
+          </div>
+          <div id="spamMonitored" class="spam-monitored" role="status"></div>
+          <div class="spam-toolbar">
             <div class="chips" id="spamState" role="group" aria-label="Status">
-              <button type="button" data-v="quarantined" aria-pressed="true">Wyciszeni</button>
-              <button type="button" data-v="banned" aria-pressed="false">Bany</button>
-              <button type="button" data-v="unblocked" aria-pressed="false">Odblokowani</button>
-              <button type="button" data-v="all" aria-pressed="false">Wszyscy</button>
+              <button type="button" data-v="quarantined" aria-pressed="true">Wyciszeni <b class="spam-count" data-count="quarantined"></b></button>
+              <button type="button" data-v="banned" aria-pressed="false">Perm ban <b class="spam-count" data-count="banned"></b></button>
+              <button type="button" data-v="unblocked" aria-pressed="false">Odblokowani <b class="spam-count" data-count="unblocked"></b></button>
+              <button type="button" data-v="all" aria-pressed="false">Wszyscy <b class="spam-count" data-count="all"></b></button>
             </div>
-            <label class="filter-label" for="spamGuild">Serwer</label>
-            <select id="spamGuild" aria-label="Serwer"></select>
+            <input type="search" id="spamSearch" placeholder="Szukaj po nicku lub ID…" maxlength="60" aria-label="Szukaj użytkownika" />
           </div>
-          <div class="spam-monitored muted" id="spamMonitored" role="status"></div>
-          <div class="absence-table-wrap">
-            <table class="absence-table spam-table">
-              <thead><tr><th>Osoba</th><th>Kanał</th><th>Powody</th><th>Treść</th><th>Wyciszenie do</th><th>Usunięte</th><th>Status</th></tr></thead>
-              <tbody id="spamRows"><tr><td colspan="7" class="muted">Ładowanie…</td></tr></tbody>
-            </table>
-          </div>
-          <div id="spamDetail" class="spam-detail" hidden>
-            <div class="spam-detail-head">
-              <strong id="spamDetailTitle"></strong>
-              <button type="button" id="spamDetailClose" class="ghost-btn">✕ Zamknij</button>
-            </div>
-            <div id="spamDetailBody" class="spam-detail-body"></div>
-            <div class="spam-detail-actions">
-              <button type="button" id="spamBan" class="ghost-btn danger-btn">🚫 Perm ban</button>
-              <button type="button" id="spamUnblock" class="ghost-btn">✅ Odblokuj</button>
-            </div>
-          </div>
+          <div id="spamList" class="spam-list" aria-live="polite"><div class="empty">Ładowanie…</div></div>
         </div>
       </section>
 
@@ -431,6 +421,29 @@
           <dl id="pfInfo" class="pf-info"></dl>
           <h4 class="pf-sub">Role na serwerze</h4>
           <div id="pfRoles" class="pf-roles"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="spamModal" class="modal" hidden>
+      <div class="modal-card glass-card spam-modal" role="dialog" aria-modal="true" aria-labelledby="spamTitle">
+        <button type="button" id="spamClose" class="modal-close" aria-label="Zamknij">&times;</button>
+        <div class="spam-head">
+          <img id="spamAv" alt="" />
+          <div class="spam-head-text">
+            <h2 id="spamTitle"></h2>
+            <p id="spamSub"></p>
+          </div>
+          <span id="spamPill" class="spam-status"></span>
+        </div>
+        <div id="spamTags" class="spam-tags"></div>
+        <dl id="spamFacts" class="spam-facts"></dl>
+        <h3 class="spam-subtitle">Historia usuniętych wiadomości <span id="spamCount" class="spam-count"></span></h3>
+        <div id="spamMsgs" class="spam-msgs"></div>
+        <p id="spamErr" class="spam-err" role="alert"></p>
+        <div id="spamActions" class="spam-actions">
+          <button type="button" id="spamUnblock" class="spam-btn unblock">✅ Odblokuj</button>
+          <button type="button" id="spamBan" class="spam-btn ban">🚫 Perm ban</button>
         </div>
       </div>
     </div>
@@ -2467,112 +2480,220 @@
       }
 
       // ───── Zakładka SPAM ─────
-      const spam = { guild: '', state: 'quarantined', incidents: [], current: null, loaded: false };
+      const spam = { guild: '', state: 'quarantined', q: '', data: null, sig: '', current: null, lastFocus: null, closeTimer: null, confirmTimer: null };
       const spEl = (id) => document.getElementById(id);
-      const REASON_LABELS = { trap: 'kanał-pułapka', invite: 'zaproszenie', link: 'link', mass_mention: 'masowa wzmianka', attachment: 'załącznik' };
+      const spamModal = spEl('spamModal');
+      const SPAM_REASONS = { trap: 'Kanał-pułapka', invite: 'Zaproszenie do serwera', link: 'Link', mass_mention: 'Masowa wzmianka', attachment: 'Załącznik' };
       const SPAM_STATUS = { quarantined: 'Wyciszony', banned: 'Perm ban', unblocked: 'Odblokowany' };
-      const SPAM_STATUS_CLASS = { quarantined: 'error', banned: 'error', unblocked: 'online' };
+      const SPAM_AVATAR = 'https://cdn.discordapp.com/embed/avatars/0.png';
+      const spamAgo = (v) => {
+        const s = Math.max(0, (Date.now() - new Date(v)) / 1000);
+        if (s < 60) return 'przed chwilą';
+        if (s < 3600) return `${Math.floor(s / 60)} min temu`;
+        if (s < 86400) return `${Math.floor(s / 3600)} godz. temu`;
+        return `${Math.floor(s / 86400)} dni temu`;
+      };
+      const spamDay = (v) => new Date(v).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-      async function loadSpam() {
+      async function loadSpam(silent = false) {
         try {
           const data = await (await apiFetch(`/api/spam${spam.guild ? `?guild=${encodeURIComponent(spam.guild)}` : ''}`)).json();
           if (!data.ok) throw new Error(data.error || 'Błąd');
-          const sel = spEl('spamGuild');
-          if (!spam.loaded || sel.options.length !== data.guilds.length) {
-            sel.innerHTML = data.guilds.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
-            if (data.guilds.length) sel.value = data.guildId;
-          }
+          spam.data = data;
           spam.guild = data.guildId || '';
-          spam.incidents = data.incidents;
-          spam.monitored = data.monitored;
-          spam.counts = data.counts;
-          spam.loaded = true;
-          renderSpam();
+
+          spEl('spamGuildWrap').hidden = data.guilds.length < 2;
+          const select = spEl('spamGuild');
+          if (select.options.length !== data.guilds.length) select.replaceChildren(...data.guilds.map((g) => new Option(g.name, g.id)));
+          if (data.guildId) select.value = data.guildId;
+
+          spEl('spamMonitored').innerHTML = data.monitored.length
+            ? `<span>Monitorowane kanały:</span>${data.monitored.map((c) => `<span class="spam-chan">${esc(c.name)}</span>`).join('')}`
+            : '<span>Brak monitorowanych kanałów na tym serwerze.</span>';
+
+          const counts = data.counts || {};
+          const total = (counts.quarantined || 0) + (counts.banned || 0) + (counts.unblocked || 0);
+          document.querySelectorAll('#spamState .spam-count').forEach((el) => {
+            const n = el.dataset.count === 'all' ? total : (counts[el.dataset.count] || 0);
+            el.textContent = n || '';
+          });
+
+          const waiting = counts.quarantined || 0;
+          const badge = spEl('spamBadge');
+          const label = waiting > 99 ? '99+' : String(waiting);
+          if (badge.textContent !== label || badge.hidden === Boolean(waiting)) { badge.textContent = label; badge.hidden = !waiting; moveGlider(); }
+
+          const sig = JSON.stringify([data.incidents.map((i) => [i.id, i.status, i.deletedCount, i.timeoutUntil]), spam.state, spam.q]);
+          if (sig === spam.sig) return;   // bez zmian — nie przerysowujemy listy
+          spam.sig = sig;
+          renderSpamList();
         } catch (e) {
-          if (e.message !== 'unauthorized') spEl('spamRows').innerHTML = '<tr><td colspan="7" class="muted">Nie udało się wczytać listy.</td></tr>';
+          if (!silent && e.message !== 'unauthorized') spEl('spamList').innerHTML = '<div class="empty">Nie udało się wczytać listy. Spróbuj za chwilę.</div>';
         }
       }
 
-      function renderSpam() {
-        const monitored = spEl('spamMonitored');
-        monitored.textContent = spam.monitored?.length ? `Monitorowane kanały: ${spam.monitored.map((c) => `#${c.name}`).join(', ')}` : 'Brak monitorowanych kanałów na tym serwerze.';
-        const badge = spEl('spamBadge');
-        const quar = spam.counts?.quarantined || 0;
-        badge.hidden = !quar;
-        badge.textContent = quar;
-        const rows = spam.incidents.filter((i) => spam.state === 'all' || i.status === spam.state);
-        const body = spEl('spamRows');
-        if (!rows.length) { body.innerHTML = `<tr><td colspan="7" class="muted">${spam.state === 'quarantined' ? 'Brak wyciszonych użytkowników.' : 'Brak wpisów.'}</td></tr>`; return; }
-        body.innerHTML = rows.map((i) => `
-          <tr data-id="${esc(i.id)}" role="button" tabindex="0">
-            <td><span class="tk-item-text"><strong>${esc(i.userName || i.userId)}</strong><span class="muted mono">${esc(i.userId)}</span></span></td>
-            <td>${i.channelName ? `#${esc(i.channelName)}` : '—'}</td>
-            <td>${(i.reasons || []).map((r) => `<span class="tiny-pill">${esc(REASON_LABELS[r] || r)}</span>`).join(' ')}</td>
-            <td class="spam-preview">${esc(i.preview || '—')}</td>
-            <td>${i.timeoutUntil ? esc(tkTime(i.timeoutUntil)) : '—'}</td>
-            <td>${i.deletedCount}</td>
-            <td><span class="tiny-pill ${SPAM_STATUS_CLASS[i.status] || ''}">${SPAM_STATUS[i.status] || esc(i.status)}</span></td>
-          </tr>`).join('');
+      function renderSpamList() {
+        const q = spam.q.toLowerCase();
+        const rows = (spam.data?.incidents || []).filter((i) => (spam.state === 'all' || i.status === spam.state) && (!q || `${i.userName} ${i.userId}`.toLowerCase().includes(q)));
+        const box = spEl('spamList');
+        spam.sig = JSON.stringify([(spam.data?.incidents || []).map((i) => [i.id, i.status, i.deletedCount, i.timeoutUntil]), spam.state, spam.q]);
+        if (!rows.length) {
+          const none = !spam.data?.guilds?.length ? 'System antyspamowy nie ma skonfigurowanych kanałów na żadnym serwerze.'
+            : spam.state === 'quarantined' && !q ? '✅ Brak wyciszonych użytkowników — wszystko spokojnie.' : 'Brak wpisów dla wybranych filtrów.';
+          box.innerHTML = `<div class="empty">${none}</div>`;
+          return;
+        }
+        box.replaceChildren(...rows.map((i) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'spam-row';
+          row.dataset.id = i.id;
+          row.dataset.status = i.status;
+          row.innerHTML = `<img class="spam-av" src="${esc(i.avatarUrl || SPAM_AVATAR)}" alt="" loading="lazy" />
+            <span class="spam-main">
+              <span class="spam-name">${esc(i.userName || i.userId)}</span>
+              <span class="spam-meta">${esc(i.userId)} • ${i.channelName ? `#${esc(i.channelName)}` : 'kanał nieznany'} • ${esc(spamAgo(i.createdAt))}</span>
+              <span class="spam-preview">${esc(i.preview || '(bez treści)')}</span>
+              <span class="spam-tags">${(i.reasons || []).map((r) => `<em>${esc(SPAM_REASONS[r] || r)}</em>`).join('')}</span>
+            </span>
+            <span class="spam-side">
+              <span class="spam-status ${esc(i.status)}">${esc(SPAM_STATUS[i.status] || i.status)}</span>
+              <span class="spam-meta">🗑 ${i.deletedCount} usuniętych</span>
+              ${i.status === 'quarantined' && i.timeoutUntil ? `<span class="spam-meta">wyciszony do ${esc(spamDay(i.timeoutUntil))}</span>` : ''}
+            </span>`;
+          row.addEventListener('click', () => openSpam(i.id));
+          return row;
+        }));
       }
 
-      async function openSpamDetail(id) {
-        let incident = spam.incidents.find((i) => i.id === id);
+      function spamResetConfirm() {
+        clearTimeout(spam.confirmTimer);
+        [['spamBan', '🚫 Perm ban'], ['spamUnblock', '✅ Odblokuj']].forEach(([id, text]) => { const b = spEl(id); b.textContent = text; b.classList.remove('confirm'); });
+      }
+
+      function renderSpamModal(incident, live) {
+        spam.current = incident;
+        spamResetConfirm();
+        spEl('spamAv').src = incident.avatarUrl || SPAM_AVATAR;
+        spEl('spamTitle').textContent = incident.userName || incident.userId;
+        spEl('spamSub').textContent = `ID: ${incident.userId}`;
+        const pill = spEl('spamPill');
+        pill.textContent = SPAM_STATUS[incident.status] || incident.status;
+        pill.className = `spam-status ${incident.status}`;
+        spEl('spamTags').innerHTML = (incident.reasons || []).map((r) => `<em>${esc(SPAM_REASONS[r] || r)}</em>`).join('');
+
+        const facts = [
+          ['Kanał', incident.channelName ? `#${incident.channelName}` : (incident.channelId || '—')],
+          ['Zgłoszono', `${tkTime(incident.createdAt)} (${spamAgo(incident.createdAt)})`],
+          ['Wyciszenie do', incident.timeoutUntil ? tkTime(incident.timeoutUntil) : 'nie udało się wyciszyć — bot ponowi próbę automatycznie']
+        ];
+        if (live) {
+          facts.push(['Na serwerze', live.inGuild ? 'tak' : 'nie (opuścił serwer)']);
+          if (live.inGuild) facts.push(['Wyciszenie na Discordzie', live.timeoutUntil ? `trwa do ${tkTime(live.timeoutUntil)}` : '⚠️ zdjęte ręcznie']);
+        }
+        if (incident.resolvedBy) facts.push(['Rozpatrzył', `${incident.resolvedBy}${incident.resolvedAt ? ` • ${tkTime(incident.resolvedAt)}` : ''}`]);
+        if (incident.notes) facts.push(['Uwagi', incident.notes]);
+        spEl('spamFacts').innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
+
+        const deleted = incident.deleted || [];
+        spEl('spamCount').textContent = deleted.length;
+        spEl('spamMsgs').innerHTML = deleted.length ? deleted.map((m) => {
+          const state = m.deleted ? '<span class="spam-ok">usunięta</span>' : `<span class="spam-bad">nie usunięto${m.error ? `: ${esc(m.error)}` : ''}</span>`;
+          const files = (m.attachments || []).filter((a) => /^https:\/\//.test(a.url)).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">📎 ${esc(a.name)}</a>`).join('');
+          return `<article class="spam-msg"><header><strong>#${esc(m.channelName || m.channelId || '?')}</strong><time>${esc(tkTime(m.ts))}</time>${state}</header><p>${m.content ? esc(m.content) : '<span class="muted">(bez treści)</span>'}</p>${files ? `<div class="spam-files">${files}</div>` : ''}</article>`;
+        }).join('') : '<div class="empty">Brak zapisanych wiadomości.</div>';
+        spEl('spamActions').hidden = incident.status !== 'quarantined';
+      }
+
+      async function openSpam(id) {
+        clearTimeout(spam.closeTimer);
+        spam.lastFocus = document.activeElement;
+        let incident = spam.data?.incidents.find((i) => i.id === id);
+        let live = null;
         try {
           const data = await (await apiFetch(`/api/spam/${encodeURIComponent(id)}`)).json();
-          if (data.ok) incident = data.incident;
-        } catch (_) { /* używamy wersji z listy */ }
-        if (!incident) return;
-        spam.current = incident;
-        spEl('spamDetailTitle').textContent = `${incident.userName || incident.userId} — ${SPAM_STATUS[incident.status] || incident.status}`;
-        const deleted = (incident.deleted || []);
-        spEl('spamDetailBody').innerHTML = `
-          <div><span class="mini-label">Powód zgłoszenia</span><div>${esc(incident.triggerContent || '—')}</div></div>
-          <div><span class="mini-label">Kanał</span><div>${incident.channelName ? `#${esc(incident.channelName)}` : esc(incident.channelId || '—')}</div></div>
-          <div><span class="mini-label">Zgłoszono</span><div>${esc(tkTime(incident.createdAt))}</div></div>
-          ${incident.resolvedBy ? `<div><span class="mini-label">Rozpatrzył</span><div>${esc(incident.resolvedBy)}${incident.resolvedAt ? ` — ${esc(tkTime(incident.resolvedAt))}` : ''}</div></div>` : ''}
-          ${incident.notes ? `<div><span class="mini-label">Notatki</span><div>${esc(incident.notes)}</div></div>` : ''}
-          ${deleted.length ? `<div><span class="mini-label">Usunięte wiadomości (${deleted.length}) — historia</span><div class="spam-deleted">${deleted.map((m) => `<div><span class="muted">#${esc(m.channelName || m.channelId || '?')} • ${esc(tkTime(m.ts))}${m.deleted ? '' : ' • NIE usunięto'}</span>${esc(m.content || '—')}</div>`).join('')}</div></div>` : ''}`;
-        const quarantined = incident.status === 'quarantined';
-        spEl('spamBan').disabled = !quarantined;
-        spEl('spamUnblock').disabled = !quarantined;
-        spEl('spamDetail').hidden = false;
-        spEl('spamDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-
-      async function spamDecision(kind) {
-        if (!spam.current || spam.busy) return;
-        const incident = spam.current;
-        if (kind === 'ban' && !confirm(`Perm ban ${incident.userName || incident.userId}? Tej operacji nie można cofnąć.`)) return;
-        spam.busy = true;
-        spEl(kind === 'ban' ? 'spamBan' : 'spamUnblock').disabled = true;
-        try {
-          const data = await (await apiFetch(`/api/spam/${encodeURIComponent(incident.id)}/${kind}`, { method: 'POST' })).json();
           if (!data.ok) throw new Error(data.error || 'Błąd');
-          spam.current = null;
-          spEl('spamDetail').hidden = true;
-          await loadSpam();
+          incident = data.incident;
+          live = data.live;
         } catch (e) {
-          if (e.message !== 'unauthorized') alert(e.message || 'Nie udało się wykonać akcji.');
-        } finally {
-          spam.busy = false;
-          spEl('spamBan').disabled = false;
-          spEl('spamUnblock').disabled = false;
+          if (e.message === 'unauthorized') return;
+          if (!incident) { showToast({ name: 'Spam', text: 'Nie udało się wczytać wpisu.' }); return; }
+          incident = { ...incident, deleted: [], notes: incident.notes || 'Nie udało się wczytać historii wiadomości.' };
         }
+        spEl('spamErr').textContent = '';
+        renderSpamModal(incident, live);
+        spamModal.hidden = false;
+        document.body.classList.add('modal-open');
+        requestAnimationFrame(() => spamModal.classList.add('open'));
+        spEl('spamClose').focus();
       }
 
-      spEl('spamGuild').addEventListener('change', (e) => { spam.guild = e.target.value; loadSpam(); });
+      function closeSpam() {
+        if (spamModal.hidden) return;
+        spamResetConfirm();
+        spamModal.classList.remove('open');
+        document.body.classList.remove('modal-open');
+        spam.closeTimer = setTimeout(() => { spamModal.hidden = true; spam.current = null; }, 260);
+        spam.lastFocus?.focus?.();
+      }
+
+      // Dwa kliknięcia: pierwsze pyta o potwierdzenie, drugie (w ciągu 4 s) wykonuje akcję
+      function spamDecision(button, action, question, doneText) {
+        button.addEventListener('click', async () => {
+          if (!spam.current) return;
+          if (!button.classList.contains('confirm')) {
+            spamResetConfirm();
+            button.classList.add('confirm');
+            button.textContent = question;
+            spam.confirmTimer = setTimeout(spamResetConfirm, 4000);
+            return;
+          }
+          spamResetConfirm();
+          spEl('spamErr').textContent = '';
+          spEl('spamActions').classList.add('busy');
+          try {
+            const response = await fetch(`/api/spam/${encodeURIComponent(spam.current.id)}/${action}`, { method: 'POST', credentials: 'same-origin' });
+            if (response.status === 401) { location.href = '/login'; return; }
+            const data = await response.json().catch(() => ({ ok: false, error: 'Nieoczekiwana odpowiedź serwera.' }));
+            if (!data.ok) { spEl('spamErr').textContent = data.error || 'Nie udało się wykonać akcji.'; return; }
+            renderSpamModal(data.incident, null);
+            showToast({ name: data.incident.userName || data.incident.userId, avatarUrl: data.incident.avatarUrl, text: doneText });
+            spam.sig = '';
+            loadSpam(true);
+          } catch (_) {
+            spEl('spamErr').textContent = 'Nie udało się wykonać akcji. Spróbuj ponownie.';
+          } finally {
+            spEl('spamActions').classList.remove('busy');
+          }
+        });
+      }
+      spamDecision(spEl('spamBan'), 'ban', 'Na pewno? Kliknij ponownie', 'dostał(a) perm bana');
+      spamDecision(spEl('spamUnblock'), 'unblock', 'Na pewno? Kliknij ponownie', 'został(a) odblokowany(a)');
+
+      spEl('spamGuild').addEventListener('change', (e) => { spam.guild = e.target.value; spam.sig = ''; loadSpam(); });
       spEl('spamState').addEventListener('click', (e) => {
         const button = e.target.closest('button[data-v]');
         if (!button) return;
         spam.state = button.dataset.v;
-        spEl('spamState').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b === button ? 'true' : 'false'));
-        renderSpam();
+        spEl('spamState').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+        renderSpamList();
       });
-      spEl('spamRows').addEventListener('click', (e) => { const row = e.target.closest('tr[data-id]'); if (row) openSpamDetail(row.dataset.id); });
-      spEl('spamRows').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { const row = e.target.closest('tr[data-id]'); if (row) { e.preventDefault(); openSpamDetail(row.dataset.id); } } });
-      spEl('spamDetailClose').addEventListener('click', () => { spEl('spamDetail').hidden = true; spam.current = null; });
-      spEl('spamBan').addEventListener('click', () => spamDecision('ban'));
-      spEl('spamUnblock').addEventListener('click', () => spamDecision('unblock'));
+      let spamSearchTimer;
+      spEl('spamSearch').addEventListener('input', (e) => { clearTimeout(spamSearchTimer); spamSearchTimer = setTimeout(() => { spam.q = e.target.value.trim(); renderSpamList(); }, 200); });
+      spEl('spamClose').addEventListener('click', closeSpam);
+      spamModal.addEventListener('click', (e) => { if (e.target === spamModal) closeSpam(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSpam(); });
+
+      // Natychmiastowe powiadomienie o nowym spamie (okienko + dźwięk) — serwer wysyła je tylko osobom z zakładką Spam
+      ticketEvents.addEventListener('spam', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          showToast({ name: data.userName || data.userId, avatarUrl: data.avatarUrl, text: '🚨 wpadł(a) w pułapkę — wyciszono, wiadomości usunięte' });
+          playChime();
+        } catch (_) { /* pomijamy nieczytelne zdarzenie */ }
+        spam.sig = '';
+        loadSpam(true);
+      });
 
       setActiveTab('home');
       loadUserState();
@@ -2584,7 +2705,7 @@
       loadMe().then(async () => {
         if (allowedTabs.has('tickets')) loadTickets();
         if (allowedTabs.has('logs')) reloadActivity();
-        if (allowedTabs.has('spam')) { loadSpam(); setInterval(() => { if (!document.hidden) loadSpam(); }, 30000); }
+        if (allowedTabs.has('spam')) { loadSpam(true); setInterval(() => { if (!document.hidden) loadSpam(true); }, 20000); }
         await refreshDashboard();
         animateLists = false;
       });
