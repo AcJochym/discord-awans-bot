@@ -2,7 +2,7 @@
 // Każda wiadomość zwykłego użytkownika na monitorowanym kanale = wyciszenie na maksymalny czas (28 dni, odnawiane)
 // + usunięcie jego wiadomości z ostatnich 5 minut na całym serwerze. Administracja decyduje w panelu: Perm ban albo Odblokuj.
 import { UserError, discordRequest, isId, snowTime } from './shared.js';
-import { getPool, onDatabaseReady } from './logStore.js';
+import { getPool, onDatabaseReady, storageMode } from './logStore.js';
 import { staffRoleIds } from './staff.js';
 
 // Rol­a sekretarki (nigdy nie karana) — stała dla serwera LSPD, nadpisywana przez SPAM_EXEMPT_ROLE_IDS w konfiguracji
@@ -81,7 +81,7 @@ let memorySeq = 0;
 
 async function db() {
   const pool = getPool();
-  if (!pool) return null;
+  if (!pool || storageMode() !== 'postgres') return null;   // baza chwilowo niedostępna — pracujemy na pamięci
   schemaPromise ||= pool.query(SCHEMA_SQL).catch((error) => { schemaPromise = null; throw error; });
   await schemaPromise;
   return pool;
@@ -273,6 +273,7 @@ async function quarantine(info, cfg, ctx) {
       notes: notes.join(' | ') || null, deleted
     });
     const label = { trap: 'kanał-pułapka', invite: 'zaproszenie do serwera', link: 'link', mass_mention: 'masowa wzmianka', attachment: 'załącznik' };
+    deps.notifyPanel?.('spam', { id: incident.id, guildId: info.guildId, userId: info.userId, userName: incident.userName, avatarUrl: incident.avatarUrl, reasons })?.catch?.(() => {});
     deps.sendWebhookLog?.(cfg.WEBHOOK_URL, {
       title: '🛡️ Spam: wyciszono użytkownika', color: 15158332,
       description: `**Użytkownik:** <@${info.userId}> (${info.userName || info.userId})\n**Kanał:** <#${info.channelId}>\n**Powód:** ${reasons.map((r) => label[r]).join(', ')}\n**Usunięte wiadomości:** ${deleted.filter((r) => r.deleted).length}/${deleted.length}\n**Wyciszenie:** ${timedOut ? 'do ' + until.slice(0, 10) : 'NIE POWIODŁO SIĘ'}\n\nDecyzja w panelu: zakładka Spam (Perm ban / Odblokuj).`,
@@ -383,6 +384,10 @@ export function startSpamJobs(ctx) {
 
 // ───────── Decyzje administracji ─────────
 async function resolve(id, actor, status, action) {
+  return serialize(`incident:${id}`, () => resolveNow(id, actor, status, action));
+}
+
+async function resolveNow(id, actor, status, action) {
   const incident = await getIncident(String(id));
   if (!incident) throw new UserError('Nie znaleziono wpisu.', 404);
   if (incident.status !== 'quarantined') throw new UserError('Ten wpis jest już rozpatrzony.', 409);
@@ -455,7 +460,17 @@ export function registerSpamRoutes(app, { serverConfigs, getGuildInfo, addDashbo
     try {
       const incident = await getIncident(String(req.params.id));
       if (!ownsIncident(incident)) return res.status(404).json({ ok: false, error: 'Nie znaleziono wpisu.' });
-      res.json({ ok: true, incident });
+      // Aktualny stan na Discordzie (czy jest na serwerze, czy wyciszenie nadal trwa) — gdy ktoś zdjął je ręcznie, administracja to zobaczy
+      let live = null;
+      if (incident.status === 'quarantined') {
+        try {
+          const member = await discordRequest('GET', `/guilds/${incident.guildId}/members/${incident.userId}`);
+          live = { inGuild: true, timeoutUntil: member.communication_disabled_until || null };
+        } catch (error) {
+          live = error?.status === 404 ? { inGuild: false, timeoutUntil: null } : null;
+        }
+      }
+      res.json({ ok: true, incident, live });
     } catch (error) {
       console.error('[spam] szczegóły:', error.message);
       res.status(502).json({ ok: false, error: 'Nie udało się wczytać wpisu.' });
