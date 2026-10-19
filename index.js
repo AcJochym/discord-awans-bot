@@ -9,7 +9,7 @@ import { handleTicketInteraction } from './tickets.js';
 import { DEFAULT_STAFF_ROLES, STAFF_GROUPS, getStaff, staffRoleIds } from './staff.js';
 import { runFactionCommand } from './commands.js';
 import { registerCommandRoutes } from './commandsPanel.js';
-import { broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
+import { broadcastPanelEvent, broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
 import { onGuildMessage, ensureSpamNotices, startSpamJobs, registerSpamRoutes } from './spam.js';
 import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
 
@@ -744,7 +744,14 @@ const commandDeps = {
 };
 
 // Kontekst systemu antyspamowego (spam.js)
-const spamCtx = { serverConfigs, botOwnerId: BOT_OWNER_ID, deps: { ...commandDeps, discordClient } };
+const spamCtx = {
+  serverConfigs, botOwnerId: BOT_OWNER_ID,
+  deps: {
+    ...commandDeps, discordClient,
+    // Natychmiastowe powiadomienie w panelu (okienko + dźwięk) — tylko dla osób z zakładką Spam
+    notifyPanel: (name, payload) => broadcastPanelEvent(name, payload, async (client) => (await dashboardTabsFor(client.userId)).includes('spam'))
+  }
+};
 
 function embedFieldValue(description, label) {
   return new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n]+)`).exec(String(description || ''))?.[1]?.trim() || '';
