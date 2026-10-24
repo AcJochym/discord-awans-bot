@@ -525,6 +525,43 @@ h3 { margin: 0; font-size: 1.5rem; font-weight: 700; }
 .config-message.error { color: var(--red); }
 .config-save { background: rgba(110, 231, 183, 0.15); }
 .config-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Edytor okienkowy konfiguracji */
+.config-mode-row { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
+.cfg-mode-toggle { display: inline-flex; align-items: center; gap: 8px; font: 600 0.9rem var(--body); cursor: pointer; }
+.cfg-mode-toggle input { width: 17px; height: 17px; accent-color: #7cc4ff; cursor: pointer; }
+.config-form { display: grid; gap: 10px; }
+.config-form[hidden] { display: none; }
+#configJsonWrap[hidden] { display: none; }
+.cfg-section { border: 1px solid var(--edge); border-radius: 14px; background: var(--glass-in); overflow: hidden; }
+.cfg-section summary {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none;
+  font: 600 1.02rem var(--display); transition: background 0.2s;
+}
+.cfg-section summary::-webkit-details-marker { display: none; }
+.cfg-section summary::before { content: ""; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform 0.25s cubic-bezier(.2, .8, .2, 1); }
+.cfg-section[open] summary::before { transform: rotate(45deg); }
+.cfg-section summary:hover { background: rgba(255, 255, 255, 0.07); }
+.cfg-section summary:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+.cfg-body { display: grid; gap: 10px; padding: 4px 14px 14px; }
+.cfg-field { display: flex; align-items: center; gap: 10px; }
+.cfg-field label { flex: none; width: min(230px, 45%); color: var(--muted); font-size: 0.82rem; }
+.cfg-input {
+  flex: 1; min-width: 0; padding: 8px 12px; font: 500 0.9rem var(--body); color: var(--text); color-scheme: dark;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid var(--edge); border-radius: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+textarea.cfg-input { resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; }
+.cfg-input:focus-visible { outline: none; border-color: rgba(190, 228, 255, 0.85); box-shadow: 0 0 0 3px rgba(124, 196, 255, 0.25); background: rgba(255, 255, 255, 0.12); }
+.cfg-field input[type="checkbox"] { width: 18px; height: 18px; accent-color: #7cc4ff; cursor: pointer; }
+.cfg-eye { flex: none; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--edge); background: var(--glass-in); color: var(--text); cursor: pointer; font-size: 0.95rem; }
+.cfg-eye:hover { background: rgba(255, 255, 255, 0.16); }
+.config-form:disabled { opacity: 0.6; }
+.config-form:disabled .cfg-input, .config-form:disabled .cfg-eye { opacity: 0.6; cursor: not-allowed; }
+@media (max-width: 560px) {
+  .cfg-field { flex-direction: column; align-items: stretch; gap: 4px; }
+  .cfg-field label { width: 100%; }
+}
 @media (max-width: 560px) {
   .config-editor { padding: 18px 16px; }
   .config-editor .panel-header { align-items: stretch; }
