@@ -1294,14 +1294,16 @@ registerSpamRoutes(app, { serverConfigs, getGuildInfo, addDashboardLog });
 
 app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
   try {
-    const guilds = [];
     const summaries = await guildSummaries();
-    for (const [guildId, cfg] of Object.entries(serverConfigs)) {
-      const guildInfo = await getGuildInfo(guildId, true);
+    const guilds = (await Promise.all(Object.entries(serverConfigs).map(async ([guildId, cfg]) => {
       const sum = summaries.get(guildId) || { total: 0, commands: 0, lastEvent: null, errors24h: 0 };
-      guilds.push({
+      const guildInfo = await Promise.race([
+        getGuildInfo(guildId, true),
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000))
+      ]).catch(() => null);
+      return {
         id: guildId,
-        name: guildInfo?.name || 'Nieznany serwer',
+        name: guildInfo?.name || discordClient.guilds.cache.get(guildId)?.name || 'Nieznany serwer',
         memberCount: guildInfo?.approximate_member_count ?? discordClient.guilds.cache.get(guildId)?.memberCount ?? null,
         channels: cfg.CHANNELS ? Object.keys(cfg.CHANNELS).length : 0,
         ticketsEnabled: Boolean(cfg.TICKETS),
@@ -1312,8 +1314,8 @@ app.get('/api/servers', requireDashboardAuth, async (_req, res) => {
           lastEvent: sum.lastEvent,
           status: sum.errors24h > 0 ? 'warning' : 'online'
         }
-      });
-    }
+      };
+    })));
     res.json({ ok: true, guilds });
   } catch (error) {
     console.error('Błąd pobierania listy serwerów:', error);
