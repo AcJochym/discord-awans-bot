@@ -317,8 +317,15 @@
             <select id="configGuild" class="staff-guild" aria-label="Serwer konfiguracji"></select>
           </div>
           <p class="config-note">Wartości poufne są maskowane i szyfrowane w bazie. Pozostaw <code>[KEEP_EXISTING_SECRET]</code>, aby zachować wartość, wpisz nową, by ją zmienić, lub wyczyść pole, aby ją usunąć.</p>
-          <label class="filter-label" for="configJson">Ustawienia JSON</label>
-          <textarea id="configJson" class="config-json" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="configStatus"></textarea>
+          <div class="config-mode-row">
+            <label class="cfg-mode-toggle"><input type="checkbox" id="configFormMode" checked> Edytor okienkowy</label>
+            <span class="muted">Odznacz, aby edytować surowy JSON.</span>
+          </div>
+          <div id="configForm" class="config-form" aria-label="Ustawienia serwera"></div>
+          <div id="configJsonWrap">
+            <label class="filter-label" for="configJson">Ustawienia JSON</label>
+            <textarea id="configJson" class="config-json" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="configStatus"></textarea>
+          </div>
           <div class="config-actions">
             <span id="configStatus" class="config-message" role="status" aria-live="polite">Wczytaj konfigurację serwera.</span>
             <div>
@@ -967,12 +974,140 @@
       const configJson = document.getElementById('configJson');
       const configStatus = document.getElementById('configStatus');
       const saveConfigBtn = document.getElementById('saveConfig');
-      let configTabLoading = false;
+      const configForm = document.getElementById('configForm');
+      const configJsonWrap = document.getElementById('configJsonWrap');
+      const configFormMode = document.getElementById('configFormMode');
+      const CFG_LABELS = {
+        REQUIRED_ROLE_IDS: 'Role z dostępem do komend (ID, jedna na wiersz)',
+        STAFF_GUILD_ID: 'ID serwera kadry',
+        WEBHOOK_URL: 'Webhook (URL)',
+        ROLES: 'Role',
+        CHANNELS: 'Kanały',
+        URLOP: 'Urlopy',
+        ZAWIESZENIE: 'Zawieszenia',
+        URLOP_ROLE_ID: 'Rola urlopu (ID)',
+        HIGH_COMMAND: 'Najwyższa komenda',
+        COMMAND: 'Komenda',
+        MEDIUM_COMMAND: 'Średnia komenda',
+        COMMAND_FTD: 'Komenda FTD',
+        FTD: 'FTD'
+      };
+      let currentConfig = null;
+      let configDbAvailable = true;
 
       function setConfigStatus(message, state = '') {
         configStatus.textContent = message;
         configStatus.className = `config-message${state ? ` ${state}` : ''}`;
       }
+
+      function cfgName(key) { return CFG_LABELS[key] || key.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase()); }
+
+      function cfgField(path, label, value, secret = false) {
+        const wrap = document.createElement('div');
+        wrap.className = 'cfg-field';
+        wrap.dataset.path = path;
+        const lbl = document.createElement('label');
+        lbl.textContent = label;
+        wrap.appendChild(lbl);
+        const isArrayValue = Array.isArray(value);
+        const kind = secret ? 'secret' : (typeof value === 'boolean' ? 'bool' : (typeof value === 'number' ? 'number' : (isArrayValue ? 'list' : 'text')));
+        wrap.dataset.kind = kind;
+        if (kind === 'bool') {
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = !!value;
+          wrap.appendChild(input);
+        } else if (kind === 'list') {
+          const input = document.createElement('textarea');
+          input.className = 'cfg-input';
+          input.rows = Math.min(4, Math.max(2, value.length || 2));
+          input.placeholder = 'Jedna wartość na wiersz…';
+          input.value = value.join('\n');
+          wrap.appendChild(input);
+        } else {
+          const input = document.createElement('input');
+          input.className = 'cfg-input';
+          input.type = secret ? 'password' : (kind === 'number' ? 'number' : 'text');
+          input.autocomplete = secret ? 'new-password' : 'off';
+          input.spellcheck = false;
+          input.value = kind === 'number' ? String(value) : String(value ?? '');
+          if (secret) {
+            const eye = document.createElement('button');
+            eye.type = 'button';
+            eye.className = 'cfg-eye';
+            eye.textContent = '👁';
+            eye.title = 'Pokaż / ukryj wartość';
+            eye.addEventListener('click', () => { input.type = input.type === 'password' ? 'text' : 'password'; });
+            wrap.appendChild(eye);
+          }
+          wrap.appendChild(input);
+        }
+        return wrap;
+      }
+
+      function cfgSection(name, label, value, path = []) {
+        const det = document.createElement('details');
+        det.className = 'cfg-section';
+        det.open = path.length === 0;
+        const sum = document.createElement('summary');
+        sum.textContent = label;
+        det.appendChild(sum);
+        const body = document.createElement('div');
+        body.className = 'cfg-body';
+        for (const [key, child] of Object.entries(value)) {
+          const childPath = [...path, key];
+          const childLabel = CFG_LABELS[key] || cfgName(key);
+          if (child !== null && typeof child === 'object' && !Array.isArray(child)) body.appendChild(cfgSection(key, childLabel, child, childPath));
+          else body.appendChild(cfgField(childPath.join('.'), childLabel, child, /token|password|secret|credential|webhook|private|api.?key/i.test(key)));
+        }
+        det.appendChild(body);
+        return det;
+      }
+
+      function renderConfigForm(config) {
+        configForm.replaceChildren();
+        for (const [key, value] of Object.entries(config)) {
+          const label = CFG_LABELS[key] || cfgName(key);
+          if (value !== null && typeof value === 'object' && !Array.isArray(value)) configForm.appendChild(cfgSection(key, label, value, [key]));
+          else configForm.appendChild(cfgField(key, label, value, /token|password|secret|credential|webhook|private|api.?key/i.test(key)));
+        }
+      }
+
+      function collectConfigForm() {
+        const result = {};
+        for (const wrap of configForm.querySelectorAll('.cfg-field')) {
+          const path = wrap.dataset.path.split('.');
+          const input = wrap.querySelector('input, textarea');
+          let value;
+          if (wrap.dataset.kind === 'bool') value = input.checked;
+          else if (wrap.dataset.kind === 'number') value = Number(input.value);
+          else if (wrap.dataset.kind === 'list') value = input.value.split('\n').map((line) => line.trim()).filter(Boolean);
+          else value = input.value;
+          let node = result;
+          for (let i = 0; i < path.length - 1; i++) {
+            if (typeof node[path[i]] !== 'object' || node[path[i]] === null) node[path[i]] = {};
+            node = node[path[i]];
+          }
+          node[path[path.length - 1]] = value;
+        }
+        return result;
+      }
+
+      function applyConfigMode() {
+        const formMode = configFormMode.checked && !!currentConfig;
+        configForm.hidden = !formMode;
+        configJsonWrap.hidden = formMode;
+      }
+
+      configFormMode.addEventListener('change', () => {
+        if (!configFormMode.checked && currentConfig) {
+          try {
+            const merged = JSON.parse(configJson.value || '{}');
+            configJson.value = JSON.stringify({ ...merged, ...collectConfigForm() }, null, 2);
+          } catch (_) {}
+        }
+        applyConfigMode();
+      });
 
       async function loadSelectedConfig() {
         const guildId = configGuildSel.value;
@@ -984,7 +1119,12 @@
           const response = await apiFetch(`/api/config/${encodeURIComponent(guildId)}`);
           const data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wczytać konfiguracji.');
+          currentConfig = data.config;
+          configDbAvailable = !!data.databaseAvailable;
           configJson.value = JSON.stringify(data.config, null, 2);
+          renderConfigForm(data.config);
+          applyConfigMode();
+          configForm.disabled = !data.databaseAvailable;
           configJson.disabled = false;
           saveConfigBtn.disabled = !data.databaseAvailable;
           setConfigStatus(data.databaseAvailable
@@ -1022,6 +1162,12 @@
       configGuildSel.addEventListener('change', loadSelectedConfig);
       document.getElementById('reloadConfig').addEventListener('click', loadSelectedConfig);
       saveConfigBtn.addEventListener('click', async () => {
+        if (configFormMode.checked && currentConfig) {
+          try {
+            const merged = JSON.parse(configJson.value || '{}');
+            configJson.value = JSON.stringify({ ...merged, ...collectConfigForm() }, null, 2);
+          } catch (_) {}
+        }
         let config;
         try {
           config = JSON.parse(configJson.value);
@@ -1039,7 +1185,10 @@
           });
           const data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się zapisać konfiguracji.');
+          currentConfig = data.config;
           configJson.value = JSON.stringify(data.config, null, 2);
+          renderConfigForm(data.config);
+          applyConfigMode();
           setConfigStatus('Konfiguracja zapisana w PostgreSQL i zastosowana.', 'success');
         } catch (error) {
           setConfigStatus(error.message, 'error');
