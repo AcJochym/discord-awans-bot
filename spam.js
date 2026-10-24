@@ -1,7 +1,7 @@
 // System antyspamowy oparty na kanałach-pułapkach.
 // Każda wiadomość zwykłego użytkownika na monitorowanym kanale = wyciszenie na maksymalny czas (28 dni, odnawiane)
 // + usunięcie jego wiadomości z ostatnich 5 minut na całym serwerze. Administracja decyduje w panelu: Perm ban albo Odblokuj.
-import { UserError, discordRequest, isId, snowTime } from './shared.js';
+import { UserError, discordRequest, fetch as httpFetch, isId, snowTime } from './shared.js';
 import { getPool, onDatabaseReady, storageMode } from './logStore.js';
 import { staffRoleIds } from './staff.js';
 
@@ -73,11 +73,34 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_spam_incidents_guild ON spam_incidents (guild_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_spam_incidents_user ON spam_incidents (guild_id, user_id, status);
   CREATE TABLE IF NOT EXISTS spam_notices (channel_id TEXT PRIMARY KEY, posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+  CREATE TABLE IF NOT EXISTS spam_files (
+    id BIGSERIAL PRIMARY KEY, guild_id TEXT NOT NULL, message_id TEXT, name TEXT, content_type TEXT NOT NULL, size INT NOT NULL,
+    data BYTEA NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_spam_files_created ON spam_files (created_at);
 `;
 let schemaPromise = null;
 const memoryIncidents = new Map();
 const memoryNotices = new Set();
 let memorySeq = 0;
+const memoryFiles = new Map();
+let fileSeq = 0;
+
+// ───────── Podglądy załączników (dowody) ─────────
+// Linki z Discorda wygasają, a po usunięciu wiadomości plik znika, więc obrazy zapisujemy w bazie PRZED usunięciem wiadomości.
+const EVIDENCE_MAX_BYTES = 1_500_000;   // jeden podgląd
+const EVIDENCE_MAX_FILES = 20;          // na jedno zgłoszenie
+const CDN_HOSTS = /^(?:cdn\.discordapp\.com|media\.discordapp\.net|images-ext-\d+\.discordapp\.net)$/;   // pobieramy wyłącznie z CDN Discorda
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+
+// Typ obrazu rozpoznany po zawartości (nie ufamy nagłówkom ani nazwie pliku)
+export function sniffImage(buffer) {
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  return null;
+}
 
 async function db() {
   const pool = getPool();
@@ -209,6 +232,74 @@ async function markNotice(channelId) {
   } catch (error) { console.error('[spam] zapis informacji o ostrzeżeniu:', error.message); }
 }
 
+async function saveFile(guildId, messageId, name, contentType, data) {
+  try {
+    const pool = await db();
+    if (pool) {
+      const r = await pool.query('INSERT INTO spam_files (guild_id, message_id, name, content_type, size, data) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id', [guildId, messageId, String(name).slice(0, 200), contentType, data.length, data]);
+      return String(r.rows[0].id);
+    }
+  } catch (error) {
+    console.error('[spam] zapis podglądu do bazy nie powiódł się, zapisuję w pamięci:', error.message);
+  }
+  const id = `mf${++fileSeq}`;
+  memoryFiles.set(id, { guildId, contentType, data });
+  if (memoryFiles.size > 100) memoryFiles.delete(memoryFiles.keys().next().value);
+  return id;
+}
+
+async function getFile(id) {
+  if (memoryFiles.has(id)) return memoryFiles.get(id);
+  if (!/^\d+$/.test(id)) return null;
+  const pool = await db();
+  if (!pool) return null;
+  const r = await pool.query('SELECT guild_id, content_type, data FROM spam_files WHERE id = $1', [id]);
+  return r.rows[0] ? { guildId: r.rows[0].guild_id, contentType: r.rows[0].content_type, data: r.rows[0].data } : null;
+}
+
+// Pobiera pomniejszony podgląd (przez media proxy Discorda), a gdy się nie uda — mały oryginał
+async function downloadThumbnail(att) {
+  const candidates = [att.proxyUrl ? `${att.proxyUrl}${att.proxyUrl.includes('?') ? '&' : '?'}width=640&height=640` : null, att.url].filter(Boolean);
+  for (const url of candidates) {
+    try {
+      if (!CDN_HOSTS.test(new URL(url).hostname)) continue;
+      const res = await httpFetch(url, { timeout: 5000 });
+      if (!res.ok || Number(res.headers.get('content-length')) > 8_000_000) continue;
+      const data = Buffer.from(await res.arrayBuffer());
+      if (!data.length || data.length > EVIDENCE_MAX_BYTES) continue;
+      const contentType = sniffImage(data);
+      if (contentType) return { data, contentType };
+    } catch { /* próbujemy następny adres */ }
+  }
+  return null;
+}
+
+// Dla wiadomości do usunięcia: zapisuje podglądy obrazów i zwraca opis załączników (messageId -> lista)
+async function collectEvidence(entries, guildId) {
+  const result = new Map();
+  const jobs = [];
+  let stored = 0;
+  for (const entry of entries) {
+    const metas = [];
+    for (const a of entry.attachments || []) {
+      const meta = { name: a.name || 'plik', size: a.size || null, contentType: a.contentType || null, url: a.url || null, fileId: null, note: null };
+      metas.push(meta);
+      const looksImage = /^image\/(png|jpe?g|gif|webp)/i.test(a.contentType || '') || IMAGE_EXT.test(a.name || '');
+      if (!looksImage) { meta.note = 'To nie obraz — zapisano tylko nazwę (link może wygasnąć)'; continue; }
+      if (stored >= EVIDENCE_MAX_FILES) { meta.note = 'Limit zapisanych podglądów dla tego zgłoszenia'; continue; }
+      stored += 1;
+      jobs.push((async () => {
+        const image = await downloadThumbnail(a);
+        if (!image) { meta.note = 'Nie udało się pobrać podglądu (link mógł wygasnąć)'; return; }
+        try { meta.fileId = await saveFile(guildId, entry.id, meta.name, image.contentType, image.data); } catch { meta.note = 'Nie udało się zapisać podglądu'; }
+      })());
+    }
+    result.set(entry.id, metas);
+  }
+  await Promise.all(jobs);
+  return result;
+}
+
 // ───────── Działania na Discordzie ─────────
 const describeError = (error) => (error?.status === 403 ? 'brak uprawnień bota lub wyższa rola użytkownika (HTTP 403)' : error?.status === 404 ? 'nie znaleziono (HTTP 404)' : error?.message || 'nieznany błąd');
 const timeoutUntilIso = () => new Date(Date.now() + MAX_TIMEOUT_MS).toISOString();
@@ -252,7 +343,13 @@ async function quarantine(info, cfg, ctx) {
 
   const [timedOut, deleted] = await Promise.all([
     setTimeoutFor(info.guildId, info.userId, until, 'Spam: wiadomość na kanale-pułapce').then(() => true).catch((error) => { notes.push(`Wyciszenie nie powiodło się: ${describeError(error)}`); return false; }),
-    deleteEntries(recentMessages(info.guildId, info.userId, now - DELETE_WINDOW_MS))
+    (async () => {
+      const entries = recentMessages(info.guildId, info.userId, now - DELETE_WINDOW_MS);
+      const evidence = await collectEvidence(entries, info.guildId);   // podglądy zapisujemy ZANIM wiadomości znikną
+      const records = await deleteEntries(entries);
+      for (const record of records) record.attachments = evidence.get(record.id) || [];
+      return records;
+    })()
   ]);
   deleted.filter((r) => r.error).forEach((r) => notes.push(`Nie usunięto wiadomości z #${r.channelName || r.channelId}: ${r.error}`));
 
@@ -305,7 +402,7 @@ function describe(message) {
     ts: message.createdTimestamp || Date.now(), bot: Boolean(message.author?.bot || message.webhookId || message.system), userId: message.author?.id,
     userName: message.member?.displayName || message.author?.globalName || message.author?.username,
     avatarUrl: message.member?.displayAvatarURL?.({ size: 64 }) || message.author?.displayAvatarURL?.({ size: 64 }) || null,
-    attachments: [...(message.attachments?.values?.() || [])].map((a) => ({ name: a.name, url: a.url })), mentionsEveryone: Boolean(message.mentions?.everyone),
+    attachments: [...(message.attachments?.values?.() || [])].map((a) => ({ name: a.name, url: a.url, proxyUrl: a.proxyURL, contentType: a.contentType, size: a.size })), mentionsEveryone: Boolean(message.mentions?.everyone),
     roleIds: message.member?.roles?.cache ? [...message.member.roles.cache.keys()] : null,
     isAdmin: Boolean(message.member?.permissions?.has?.('Administrator')), guildOwnerId: message.guild?.ownerId || null
   };
@@ -370,7 +467,10 @@ export async function renewTimeouts() {
 async function purgeOld() {
   try {
     const pool = await db();
-    if (pool) await pool.query("DELETE FROM spam_incidents WHERE created_at < NOW() - ($1 || ' days')::interval AND status <> 'quarantined'", [String(RETENTION_DAYS)]);
+    if (pool) {
+      await pool.query("DELETE FROM spam_incidents WHERE created_at < NOW() - ($1 || ' days')::interval AND status <> 'quarantined'", [String(RETENTION_DAYS)]);
+      await pool.query("DELETE FROM spam_files WHERE created_at < NOW() - ($1 || ' days')::interval", [String(RETENTION_DAYS)]);
+    }
   } catch (error) { console.error('[spam] czyszczenie starych wpisów:', error.message); }
 }
 
@@ -420,7 +520,10 @@ const getChannel = (id) => {
   return p;
 };
 
+const imageCountOf = (i) => (i.deleted || []).reduce((n, m) => n + (m.attachments || []).filter((a) => a.fileId).length, 0);
+
 const light = (i) => ({
+  imageCount: imageCountOf(i),
   id: i.id, userId: i.userId, userName: i.userName, avatarUrl: i.avatarUrl, channelName: i.channelName, reasons: i.reasons, status: i.status, createdAt: i.createdAt,
   timeoutUntil: i.timeoutUntil, deletedCount: i.deleted.length, preview: String(i.triggerContent || '').slice(0, 120), resolvedBy: i.resolvedBy, resolvedAt: i.resolvedAt
 });
@@ -438,6 +541,23 @@ export function registerSpamRoutes(app, { serverConfigs, getGuildInfo, addDashbo
   }
 
   const ownsIncident = (incident) => incident && serverConfigs[incident.guildId];
+
+  // Zapisany podgląd obrazu (dowód). Tylko dla osób z zakładką Spam; plik jest podawany jako obraz w piaskownicy, nigdy jako strona
+  app.get('/api/spam/files/:fileId', async (req, res) => {
+    try {
+      const file = await getFile(String(req.params.fileId));
+      if (!file || !serverConfigs[file.guildId]) return res.status(404).json({ ok: false, error: 'Nie znaleziono pliku.' });
+      res.setHeader('Content-Type', file.contentType);
+      res.setHeader('Content-Disposition', 'inline; filename="dowod"');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.send(file.data);
+    } catch (error) {
+      console.error('[spam] plik:', error.message);
+      res.status(502).json({ ok: false, error: 'Nie udało się wczytać pliku.' });
+    }
+  });
 
   app.get('/api/spam', async (req, res) => {
     try {
