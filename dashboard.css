@@ -1066,3 +1066,24 @@ body.modal-open { overflow: hidden; }
   .spam-actions { flex-direction: column-reverse; }
   .spam-btn { width: 100%; }
 }
+
+/* Komendy: przełącznik „Wystaw przez kogoś innego" i pole, które pojawia się po jego zaznaczeniu */
+.cmd-field[hidden] { display: none; }
+.cmd-field.reveal { animation: rise 0.3s cubic-bezier(.2, .8, .2, 1) both; }
+.cmd-field.bool.toggle { flex-direction: row; justify-content: flex-start; padding: 11px 14px; border: 1px solid var(--edge); border-radius: 14px; background: rgba(255, 255, 255, 0.05); cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+.cmd-field.bool.toggle:hover { background: rgba(255, 255, 255, 0.1); }
+.cmd-field.bool.toggle:has(input:checked) { border-color: rgba(124, 196, 255, 0.7); background: rgba(124, 196, 255, 0.14); }
+.cmd-field.bool.toggle label { flex: 1; margin: 0; color: var(--text); font-size: 0.92rem; cursor: pointer; }
+.cmd-field.bool.toggle input { flex: none; cursor: pointer; }
+.cmd-note { margin: 0 0 6px; padding: 8px 12px; border-radius: 12px; font-size: 0.84rem; color: #cfe8ff; background: rgba(124, 196, 255, 0.12); border: 1px solid rgba(124, 196, 255, 0.3); }
+
+/* Spam: zapisane podglądy obrazów (dowody) */
+.spam-thumbs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.spam-thumb { display: flex; flex-direction: column; gap: 4px; width: 132px; color: var(--muted); font-size: 0.72rem; text-decoration: none; }
+.spam-thumb img { width: 132px; height: 100px; object-fit: cover; border-radius: 10px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.35); transition: transform 0.25s cubic-bezier(.2, .8, .2, 1), border-color 0.25s, box-shadow 0.25s; }
+.spam-thumb:hover img { transform: scale(1.04); border-color: rgba(190, 228, 255, 0.7); box-shadow: 0 10px 22px rgba(0, 0, 0, 0.45); }
+.spam-thumb:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: 10px; }
+.spam-thumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spam-file { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 5px 10px; border-radius: 10px; font-size: 0.8rem; background: rgba(255, 255, 255, 0.06); border: 1px dashed var(--edge); }
+.spam-file a { color: #8ecbff; }
+.spam-file small { color: var(--muted); }
