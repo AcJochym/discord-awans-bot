@@ -157,7 +157,7 @@ function validateConfigShape(template, value, path = 'config') {
   if (isConfigObject(template)) {
     if (!isConfigObject(value)) return `${path}: oczekiwano obiektu.`;
     for (const [key, child] of Object.entries(value)) {
-      if (!Object.hasOwn(template, key)) return `${path}.${key}: nieznane pole.`;
+      if (!Object.hasOwn(template, key)) continue;   // nieznane klucze (np. STAFF_ROLES, RANK_ROLE_IDS, SPAM_CHANNEL_IDS dodane przez nowe funkcje) są przepuszczane
       const error = validateConfigShape(template[key], child, `${path}.${key}`);
       if (error) return error;
     }
@@ -957,8 +957,8 @@ app.get('/auth/callback', async (req, res) => {
   if (['interaction_required', 'consent_required', 'login_required'].includes(req.query.error)) return res.redirect('/auth/discord?consent=1');
   if (req.query.error) return res.redirect('/login?error=anulowano');
 
-  const saved = readSigned(parseCookies(req).dash_state);
-  setCookie(res, 'dash_state', '', 0);
+  const saved = readSigned(parseCookies(req).dash_state);   // stan OAuth2: sprawdzamy podpis i losowy ciąg
+  setCookie(res, 'dash_state', '', 0);   // od razu usuwamy ciasteczko stanu (jednorazowe)
   if (!saved || !req.query.state || saved.state !== req.query.state || !req.query.code) return res.redirect('/login?error=state');
 
   try {
@@ -1390,12 +1390,15 @@ app.get('/api/absences', requireDashboardAuth, async (req, res) => {
 app.get('/api/config/:guildId', requireDashboardAuth, requireBotOwner, (req, res) => {
   const guildId = String(req.params.guildId);
   if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
+  const encKeyOk = (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16;
+  const dbOk = storageMode() === 'postgres';
   res.json({
     ok: true,
     guildId,
     config: editorConfig(serverConfigs[guildId]),
     saved: savedConfigGuilds.has(guildId),
-    databaseAvailable: storageMode() === 'postgres' && (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16
+    databaseAvailable: dbOk && encKeyOk,
+    errorHint: !dbOk ? 'Brak połączenia z PostgreSQL. Sprawdź zmienną DATABASE_URL.' : !encKeyOk ? 'Klucz szyfrowania jest za krótki — ustaw CONFIG_ENCRYPTION_KEY lub DASHBOARD_SESSION_SECRET o długości co najmniej 16 znaków.' : null
   });
 });
 
@@ -1787,7 +1790,7 @@ async function startServer() {
   await logStoreReady;
   await loadSavedServerConfigs();
   // Jeśli baza była niedostępna przy starcie, wczytaj zapisane ustawienia, gdy tylko wróci
-  if (storageMode() === 'postgres') onDatabaseReady(() => {}); else onDatabaseReady(() => loadSavedServerConfigs());
+  onDatabaseReady(() => loadSavedServerConfigs());   // przy powrocie bazy po awarii przeładuj zapisane konfiguracje serwera
   processAbsenceReturnReminders();
   setInterval(processAbsenceReturnReminders, 60 * 1000).unref();
   startSpamJobs(spamCtx);
