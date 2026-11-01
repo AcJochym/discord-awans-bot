@@ -1129,7 +1129,7 @@
           saveConfigBtn.disabled = !data.databaseAvailable;
           setConfigStatus(data.databaseAvailable
             ? (data.saved ? 'Zapisano w PostgreSQL.' : 'Ustawienia bazowe. Zapis utworzy wpis w PostgreSQL.')
-            : 'Brak połączenia z PostgreSQL. Zapis konfiguracji jest niedostępny.', data.databaseAvailable ? '' : 'error');
+            : (data.errorHint || 'Zapis konfiguracji jest niedostepny.'), data.databaseAvailable ? '' : 'error');
         } catch (error) {
           setConfigStatus(error.message, 'error');
         }
@@ -1138,6 +1138,8 @@
       async function loadConfigTab() {
         if (configTabLoading) return;
         configTabLoading = true;
+        saveConfigBtn.disabled = true;
+        setConfigStatus('Ładowanie listy serwerów…');
         try {
           if (!configGuildSel.options.length) {
             const response = await apiFetch('/api/servers');
@@ -1153,7 +1155,7 @@
           }
           await loadSelectedConfig();
         } catch (error) {
-          setConfigStatus(error.message, 'error');
+          setConfigStatus(error.message || 'Nie udało się pobrać listy serwerów.', 'error');
         } finally {
           configTabLoading = false;
         }
