@@ -1138,23 +1138,26 @@
         if (configTabLoading) return;
         configTabLoading = true;
         saveConfigBtn.disabled = true;
-        setConfigStatus('Ładowanie listy serwerów…');
+        setConfigStatus('Ładowanie…');
         try {
-          if (!configGuildSel.options.length) {
-            const response = await apiFetch('/api/servers');
-            const data = await response.json();
-            if (!response.ok || !data.ok || !Array.isArray(data.guilds)) throw new Error(data.error || 'Nie udało się pobrać serwerów.');
-            configGuildSel.replaceChildren(...data.guilds.map((guild) => new Option(`${guild.name} (${guild.id})`, guild.id)));
-            if (!data.guilds.length) {
-              configJson.disabled = true;
-              saveConfigBtn.disabled = true;
-              setConfigStatus('Brak skonfigurowanych serwerów.', 'error');
-              return;
-            }
+          // Pobieramy listę serwerów z /api/config — szybko, bez czekania na Discord
+          const response = await apiFetch('/api/config');
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się pobrać listy serwerów.');
+          if (!data.guilds.length) {
+            configJson.disabled = true;
+            saveConfigBtn.disabled = true;
+            setConfigStatus('Brak skonfigurowanych serwerów.', 'error');
+            return;
           }
+          // Aktualizuj status bazy od razu
+          if (!data.databaseAvailable) setConfigStatus(data.errorHint || 'Zapis konfiguracji jest niedostepny.', 'error');
+          // Wypełnij selector serwerów (zawsze, żeby po odświeżeniu lista była aktualna)
+          configGuildSel.replaceChildren(...data.guilds.map((g) => new Option(`${g.name} (${g.id})`, g.id)));
           await loadSelectedConfig();
         } catch (error) {
           setConfigStatus(error.message || 'Nie udało się pobrać listy serwerów.', 'error');
+          configTabLoading = false;
         } finally {
           configTabLoading = false;
         }
