@@ -738,7 +738,6 @@
           allowedTabs = new Set(Array.isArray(data.allowedTabs) ? data.allowedTabs : ['home']);
           allowedTabs.add('home');
           tabButtons.forEach((button) => { button.hidden = !allowedTabs.has(button.dataset.tab); });
-          document.getElementById('configTabButton').hidden = !data.isBotOwner;
           document.getElementById('clearLogsBtn').hidden = !data.isBotOwner;
           document.getElementById('userAvatar').src = data.avatarUrl;
           document.getElementById('userName').textContent = data.name;
@@ -2491,7 +2490,8 @@
         wrap.append(input, chip, list);
         if (field.prefill === 'self' && cmd.data.me) choose(cmd.data.me);   // domyślnie ty — możesz zmienić
       }
-function buildCommandField(field) {
+
+      function buildCommandField(field) {
         const wrap = document.createElement('div');
         wrap.className = `cmd-field${['number', 'date', 'time', 'select', 'bool'].includes(field.type) ? ' half' : ''}`;
         wrap.dataset.field = field.key;
