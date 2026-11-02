@@ -1387,6 +1387,17 @@ app.get('/api/absences', requireDashboardAuth, async (req, res) => {
   }
 });
 
+app.get('/api/config', requireDashboardAuth, requireBotOwner, (req, res) => {
+  // Szybka lista serwerów z lokalnej konfiguracji — nie wymaga połączenia z Discordem
+  const guilds = Object.entries(serverConfigs).map(([id, cfg]) => ({
+    id,
+    name: discordClient.guilds.cache.get(id)?.name || cfg.NAME || id
+  }));
+  const encKeyOk = (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16;
+  const dbOk = storageMode() === 'postgres';
+  res.json({ ok: true, guilds, databaseAvailable: dbOk && encKeyOk, errorHint: !dbOk ? 'Brak połączenia z PostgreSQL. Sprawdź zmienną DATABASE_URL.' : !encKeyOk ? 'Klucz szyfrowania jest za krótki — ustaw CONFIG_ENCRYPTION_KEY lub DASHBOARD_SESSION_SECRET o dlugosci co najmniej 16 znakow.' : null });
+});
+
 app.get('/api/config/:guildId', requireDashboardAuth, requireBotOwner, (req, res) => {
   const guildId = String(req.params.guildId);
   if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
