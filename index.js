@@ -1394,13 +1394,27 @@ app.get('/api/absences', requireDashboardAuth, async (req, res) => {
 
 app.get('/api/config', requireDashboardAuth, requireBotOwner, (req, res) => {
   // Szybka lista serwerów z lokalnej konfiguracji — nie wymaga połączenia z Discordem
-  const guilds = Object.entries(serverConfigs).map(([id, cfg]) => ({
+  const serverIds = Object.keys(serverConfigs);
+  console.log(`[config] /api/config: serverConfigs ma ${serverIds.length} serwer(ów): ${serverIds.join(', ') || '(brak)'}`);
+  const guilds = serverIds.map((id) => ({
     id,
-    name: discordClient.guilds.cache.get(id)?.name || cfg.NAME || id
+    name: discordClient.guilds.cache.get(id)?.name || id
   }));
   const encKeyOk = (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16;
   const dbOk = storageMode() === 'postgres';
-  res.json({ ok: true, guilds, databaseAvailable: dbOk && encKeyOk, errorHint: !dbOk ? 'Brak połączenia z PostgreSQL. Sprawdź zmienną DATABASE_URL.' : !encKeyOk ? 'Klucz szyfrowania jest za krótki — ustaw CONFIG_ENCRYPTION_KEY lub DASHBOARD_SESSION_SECRET o dlugosci co najmniej 16 znakow.' : null });
+  if (!serverIds.length) console.error('[config] serverConfigs jest pusty — sprawdź zmienną SERVER_CONFIGS_JSON na Railway!');
+  res.json({
+    ok: true,
+    guilds,
+    databaseAvailable: dbOk && encKeyOk,
+    errorHint: !dbOk
+      ? 'Brak połączenia z PostgreSQL. Sprawdź zmienną DATABASE_URL.'
+      : !encKeyOk
+        ? 'DASHBOARD_SESSION_SECRET musi mieć co najmniej 16 znaków.'
+        : !serverIds.length
+          ? 'SERVER_CONFIGS_JSON jest puste lub nieprawidłowe — sprawdź zmienną środowiskową na Railway.'
+          : null
+  });
 });
 
 app.get('/api/config/:guildId', requireDashboardAuth, requireBotOwner, (req, res) => {
