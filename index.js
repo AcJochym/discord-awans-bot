@@ -1006,8 +1006,13 @@ app.post('/auth/logout', (req, res) => {
 });
 
 function requireBotOwner(req, res, next) {
-  if (!BOT_OWNER_ID || req.dashUser?.id !== BOT_OWNER_ID) {
-    return res.status(403).json({ ok: false, error: 'forbidden' });
+  const userId = req.dashUser?.id;
+  const ownerId = BOT_OWNER_ID ? String(BOT_OWNER_ID).trim() : '';
+  const userIdClean = userId ? String(userId).trim() : '';
+  if (!ownerId || userIdClean !== ownerId) {
+    // Loguj 403 żeby w Railway widać było przyczynę
+    console.warn(`[config] requireBotOwner: odmowa dostępu. userId="${userIdClean}" BOT_OWNER_ID="${ownerId}" match=${userIdClean === ownerId}`);
+    return res.status(403).json({ ok: false, error: `Brak dostępu. userId: ${userIdClean || '(brak)'}, ownerId: ${ownerId || '(BOT_OWNER_ID nie ustawione)'}` });
   }
   next();
 }
