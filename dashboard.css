@@ -699,6 +699,7 @@ button.hbar:hover { background: rgba(255, 255, 255, 0.1); }
 .moderation-action:hover { background: rgba(255, 255, 255, 0.17); transform: translateY(-1px); }
 .moderation-action-ban, .moderation-action-kick { color: #ffc0c0; }
 .moderation-action-deleteMessages { color: #ffcf8a; }
+.moderation-action-unmute { color: #a8f0c2; }
 .moderation-action:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .moderation-members .empty { padding: 20px; text-align: center; color: var(--muted); }
 .moderation-modal .filter-label { display: block; margin: 12px 0 6px; }
