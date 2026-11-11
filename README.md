@@ -24,7 +24,7 @@ Aby odpowiedzi na wiadomości działały, w Discord Developer Portal włącz **M
 
 Zakładka „Użytkownicy” jest dostępna dla ról `Command`, `High Command` i właściciela bota. W ustawieniach bota w Discord Developer Portal włącz również **Server Members Intent**. Bot musi mieć na serwerze uprawnienia do timeoutu, banowania i wyrzucania użytkowników, a na kanałach wiadomości — wyświetlanie kanału, czytanie historii, zarządzanie wiadomościami i wysyłanie wiadomości.
 
-W konfiguracji serwera ustaw `MODERATION.LOG_CHANNEL_ID` na ID kanału powiadomień. Akcje są wysyłane temu użytkownikowi w DM oraz na ten kanał. Czasowe mute ma limit Discorda wynoszący 28 dni. Permanentne mute odnawia timeout przed jego wygaśnięciem i wymaga dostępnego PostgreSQL, aby zapamiętać wyciszone osoby po restarcie.
+W konfiguracji serwera ustaw `MODERATION.LOG_CHANNEL_ID` na ID kanału powiadomień. Akcje są wysyłane temu użytkownikowi w DM oraz na ten kanał w formie embedów; bot potrzebuje tam uprawnień do wyświetlania kanału, wysyłania wiadomości i osadzania linków. Czasowe mute ma limit Discorda wynoszący 28 dni. Permanentne mute odnawia timeout przed jego wygaśnięciem i wymaga dostępnego PostgreSQL, aby zapamiętać wyciszone osoby po restarcie.
 
 ## Bezpieczeństwo panelu
 
