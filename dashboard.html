@@ -618,15 +618,54 @@
       const guildNameMap = new Map();
 
       const glider = document.querySelector('.tab-glider');
+      const dashboardShell = document.querySelector('.dashboard-shell');
       function moveGlider() {
         const active = document.querySelector('.tab.active');
         if (!active || !glider) return;
         glider.style.width = `${active.offsetWidth}px`;
         glider.style.transform = `translateX(${active.offsetLeft}px)`;
       }
+      function fitDashboardToTabs() {
+        const tabs = document.querySelector('.tabs');
+        const layout = document.querySelector('.layout');
+        const staffPanel = document.querySelector('.staff-panel');
+        if (!tabs || !layout || !staffPanel || !dashboardAccessReady) return;
+
+        dashboardShell.style.zoom = '1';
+        dashboardShell.style.width = '';
+        dashboardShell.style.maxWidth = '';
+        tabs.style.width = '';
+
+        if (window.matchMedia('(max-width: 1000px)').matches) {
+          moveGlider();
+          return;
+        }
+
+        const bodyStyle = getComputedStyle(document.body);
+        const availableWidth = document.documentElement.clientWidth
+          - Number.parseFloat(bodyStyle.paddingLeft)
+          - Number.parseFloat(bodyStyle.paddingRight);
+        const shellWidth = Math.min(availableWidth, 1380);
+        const layoutStyle = getComputedStyle(layout);
+        const layoutGap = Number.parseFloat(layoutStyle.columnGap) || 0;
+        const requiredWidth = staffPanel.getBoundingClientRect().width + layoutGap + tabs.scrollWidth;
+        const targetWidth = Math.max(shellWidth, requiredWidth);
+
+        if (targetWidth > shellWidth) {
+          const scale = Math.min(1, availableWidth / targetWidth);
+          dashboardShell.style.width = `${targetWidth}px`;
+          dashboardShell.style.maxWidth = `${targetWidth}px`;
+          dashboardShell.style.zoom = String(scale);
+        }
+        moveGlider();
+      }
       window.addEventListener('resize', moveGlider);
+      window.addEventListener('resize', fitDashboardToTabs);
       window.addEventListener('load', moveGlider);
-      if (document.fonts) document.fonts.ready.then(moveGlider);
+      if (document.fonts) document.fonts.ready.then(() => {
+        fitDashboardToTabs();
+        moveGlider();
+      });
 
       function setNum(el, value) {
         const to = Number(value) || 0;
@@ -804,7 +843,11 @@
           document.getElementById('userName').textContent = data.name;
           document.getElementById('userChip').hidden = false;
         } catch (_) { /* przekierowanie obsłuży apiFetch */ }
-        finally { dashboardAccessReady = true; moveGlider(); }
+        finally {
+          dashboardAccessReady = true;
+          fitDashboardToTabs();
+          moveGlider();
+        }
       }
 
       document.getElementById('logoutBtn').addEventListener('click', async () => {
@@ -1041,6 +1084,7 @@
       const moderationModalStatus = document.getElementById('moderationModalStatus');
       const moderationActionLabels = {
         mute: 'Mute',
+        unmute: 'Odmutuj',
         deleteMessages: 'Usuń Wiadomości',
         ban: 'Perm Ban',
         kick: 'Kick'
@@ -1097,12 +1141,13 @@
           const name = document.createElement('strong');
           name.textContent = user.name;
           const sub = document.createElement('span');
-          sub.textContent = `${user.bot ? 'Bot • ' : ''}@${user.username} • ${user.id}`;
+          sub.textContent = `${user.bot ? 'Bot • ' : ''}@${user.username} • ${user.id}${user.muted ? ` • Wyciszony do ${new Date(user.mutedUntil).toLocaleString('pl-PL')}` : ''}`;
           identity.append(avatar, name, sub);
 
           const actions = document.createElement('div');
           actions.className = 'moderation-actions';
           for (const [action, label] of Object.entries(moderationActionLabels)) {
+            if (action === 'unmute' && !user.muted) continue;
             const button = document.createElement('button');
             button.type = 'button';
             button.className = `moderation-action moderation-action-${action}`;
@@ -1215,6 +1260,7 @@
         moderationAction = action;
         moderationTargetUser = user;
         document.getElementById('moderationModalTitle').textContent = moderationActionLabels[action];
+        document.getElementById('moderationConfirm').textContent = action === 'unmute' ? 'Odmutuj' : 'Potwierdź';
         document.getElementById('moderationTarget').textContent = `${user.name} (@${user.username}, ${user.id})`;
         document.getElementById('moderationReason').value = '';
         document.getElementById('moderationPermanent').checked = false;
@@ -1307,6 +1353,10 @@
           if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wykonać akcji.');
           if (moderationAction === 'ban' || moderationAction === 'kick') {
             moderationUsers = moderationUsers.filter((user) => user.id !== moderationTargetUser.id);
+            renderModerationUsers();
+          } else if (moderationAction === 'unmute') {
+            moderationTargetUser.muted = false;
+            moderationTargetUser.mutedUntil = null;
             renderModerationUsers();
           }
           const result = [
