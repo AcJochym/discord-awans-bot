@@ -79,7 +79,17 @@ const SCHEMA_SQL = `
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_staff_absences_return ON staff_absences (returns_on) WHERE reminder_sent_at IS NULL;
-          CREATE TABLE IF NOT EXISTS panel_user_state (
+      CREATE TABLE IF NOT EXISTS permanent_mutes (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        timeout_until TIMESTAMPTZ NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (guild_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_permanent_mutes_timeout ON permanent_mutes (timeout_until);
+      CREATE TABLE IF NOT EXISTS panel_user_state (
         user_id TEXT NOT NULL,
         key TEXT NOT NULL,
         value JSONB NOT NULL,
@@ -183,6 +193,45 @@ export async function writeServerConfig(guildId, settings) {
     ON CONFLICT (guild_id) DO UPDATE
     SET settings = EXCLUDED.settings, updated_at = NOW()
   `, [guildId, settings]);
+}
+
+export async function listPermanentMutes() {
+  if (!ready) throw new Error('PostgreSQL is unavailable');
+  const result = await pool.query('SELECT guild_id, user_id, reason, timeout_until, updated_by FROM permanent_mutes');
+  return result.rows;
+}
+
+export async function getPermanentMute(guildId, userId) {
+  if (!ready) throw new Error('PostgreSQL is unavailable');
+  const result = await pool.query(
+    'SELECT guild_id, user_id, reason, timeout_until, updated_by FROM permanent_mutes WHERE guild_id = $1 AND user_id = $2',
+    [String(guildId), String(userId)]
+  );
+  return result.rows[0] || null;
+}
+
+export async function savePermanentMute({ guildId, userId, reason, timeoutUntil, updatedBy }) {
+  if (!ready) throw new Error('PostgreSQL is unavailable');
+  await pool.query(`
+    INSERT INTO permanent_mutes (guild_id, user_id, reason, timeout_until, updated_by, updated_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
+    ON CONFLICT (guild_id, user_id) DO UPDATE SET
+      reason = EXCLUDED.reason, timeout_until = EXCLUDED.timeout_until,
+      updated_by = EXCLUDED.updated_by, updated_at = NOW()
+  `, [String(guildId), String(userId), String(reason), timeoutUntil, String(updatedBy)]);
+}
+
+export async function updatePermanentMuteTimeout(guildId, userId, timeoutUntil) {
+  if (!ready) throw new Error('PostgreSQL is unavailable');
+  await pool.query(
+    'UPDATE permanent_mutes SET timeout_until = $3, updated_at = NOW() WHERE guild_id = $1 AND user_id = $2',
+    [String(guildId), String(userId), timeoutUntil]
+  );
+}
+
+export async function deletePermanentMute(guildId, userId) {
+  if (!ready) throw new Error('PostgreSQL is unavailable');
+  await pool.query('DELETE FROM permanent_mutes WHERE guild_id = $1 AND user_id = $2', [String(guildId), String(userId)]);
 }
 
 async function upsertArchive(row) {
