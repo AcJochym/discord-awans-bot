@@ -75,6 +75,7 @@ function muteLabel(until, permanent) {
 function dmContent({ action, guildName, reason, until, permanent, deletedCount, channelName }) {
   const header = {
     mute: 'Otrzymałeś mute',
+    unmute: 'Twoje mute zostało zdjęte',
     deleteMessages: 'Usunięto Twoje wiadomości',
     ban: 'Otrzymałeś permanentnego bana',
     kick: 'Zostałeś wyrzucony z serwera'
@@ -91,6 +92,7 @@ function dmContent({ action, guildName, reason, until, permanent, deletedCount, 
 function logContent({ action, guildName, targetId, actorId, reason, until, permanent, deletedCount, channelName, warning }) {
   const labels = {
     mute: 'MUTE',
+    unmute: 'ODMUTOWANIE',
     deleteMessages: 'USUNIĘCIE WIADOMOŚCI',
     ban: 'PERMANENTNY BAN',
     kick: 'KICK'
@@ -256,6 +258,8 @@ export function registerModerationRoutes(app, deps) {
         name: member.nick || member.user.global_name || member.user.username,
         username: member.user.username,
         bot: Boolean(member.user.bot),
+        mutedUntil: member.communication_disabled_until || null,
+        muted: Boolean(member.communication_disabled_until && new Date(member.communication_disabled_until).getTime() > Date.now()),
         avatarUrl: getAvatarUrl(guildId, member)
       }));
       res.json({
@@ -299,7 +303,7 @@ export function registerModerationRoutes(app, deps) {
       const targetId = validId(req.body?.userId, 'użytkownika');
       if (targetId === req.dashUser.id) throw new UserError('Nie możesz wykonać tej akcji na swoim koncie.');
       const action = String(req.body?.action || '');
-      if (!['mute', 'deleteMessages', 'ban', 'kick'].includes(action)) throw new UserError('Nieznana akcja moderacyjna.');
+      if (!['mute', 'unmute', 'deleteMessages', 'ban', 'kick'].includes(action)) throw new UserError('Nieznana akcja moderacyjna.');
       const reason = actionReason(req.body?.reason);
       const guild = await getGuild(deps.discordClient, guildId);
       if (targetId === guild.ownerId || targetId === deps.discordClient.user?.id) {
@@ -372,6 +376,33 @@ export function registerModerationRoutes(app, deps) {
           });
         }
         actionData.warning = responseWarning;
+      } else if (action === 'unmute') {
+        const previousMute = deps.storageMode() === 'postgres'
+          ? await deps.getPermanentMute(guildId, targetId)
+          : null;
+        const hasActiveTimeout = member.communicationDisabledUntilTimestamp > Date.now();
+        if (!hasActiveTimeout && !previousMute) {
+          throw new UserError('Ten użytkownik nie ma aktywnego mute.');
+        }
+        if (previousMute) {
+          await deps.deletePermanentMute(guildId, targetId);
+        }
+        try {
+          await member.timeout(null, reason);
+        } catch (error) {
+          if (previousMute) {
+            await deps.savePermanentMute({
+              guildId: previousMute.guild_id,
+              userId: previousMute.user_id,
+              reason: previousMute.reason,
+              timeoutUntil: previousMute.timeout_until,
+              updatedBy: previousMute.updated_by
+            }).catch((restoreError) => {
+              console.error('[moderation] Nie udało się przywrócić wpisu permanentnego mute po błędzie odmutowania:', restoreError);
+            });
+          }
+          throw error;
+        }
       } else if (action === 'ban') {
         await member.ban({ reason, deleteMessageSeconds: 0 });
         if (deps.storageMode() === 'postgres') {
@@ -415,7 +446,7 @@ export function registerModerationRoutes(app, deps) {
         dmSent = await sendModerationDM(member.user, dmContent({ ...actionData, channelName: channel.name }));
       }
 
-      if (action === 'mute') {
+      if (action === 'mute' || action === 'unmute') {
         dmSent = await sendModerationDM(member.user, dmContent(actionData));
       }
 
