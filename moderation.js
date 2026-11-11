@@ -89,25 +89,6 @@ function dmContent({ action, guildName, reason, until, permanent, deletedCount, 
   return `**${header}**\n${details.join('\n')}`;
 }
 
-function logContent({ action, guildName, targetId, actorId, reason, until, permanent, deletedCount, channelName, warning }) {
-  const labels = {
-    mute: 'MUTE',
-    unmute: 'ODMUTOWANIE',
-    deleteMessages: 'USUNIĘCIE WIADOMOŚCI',
-    ban: 'PERMANENTNY BAN',
-    kick: 'KICK'
-  };
-  return [
-    `**${labels[action]}** — ${guildName}`,
-    `Użytkownik: <@${targetId}> (${targetId})`,
-    `Moderator: <@${actorId}> (${actorId})`,
-    `Powód: ${reason}`,
-    action === 'mute' ? `Czas: ${muteLabel(until, permanent)}` : '',
-    action === 'deleteMessages' ? `Kanał: <#${channelName.id}>; usunięte wiadomości: ${deletedCount}` : '',
-    warning ? `Ostrzeżenie: ${warning}` : ''
-  ].filter(Boolean).join('\n');
-}
-
 async function sendModerationDM(user, content, dmChannel = null) {
   try {
     const channel = dmChannel || await user.createDM();
@@ -169,8 +150,10 @@ async function getLogChannel(client, guild, config) {
   }
   const botMember = guild.members.me || await guild.members.fetchMe();
   const permissions = channel.permissionsFor(botMember);
-  if (!permissions?.has(PermissionFlagsBits.ViewChannel) || !permissions.has(PermissionFlagsBits.SendMessages)) {
-    throw new UserError('Bot musi mieć na kanale logów uprawnienia wyświetlania i wysyłania wiadomości.', 503);
+  if (!permissions?.has(PermissionFlagsBits.ViewChannel)
+    || !permissions.has(PermissionFlagsBits.SendMessages)
+    || !permissions.has(PermissionFlagsBits.EmbedLinks)) {
+    throw new UserError('Bot musi mieć na kanale logów uprawnienia wyświetlania, wysyłania wiadomości i osadzania linków (Embed Links).', 503);
   }
   return channel;
 }
@@ -181,6 +164,51 @@ function getAvatarUrl(guildId, member) {
   if (user.avatar) return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`;
   const discriminator = Number((BigInt(user.id) >> 22n) % 6n);
   return `https://cdn.discordapp.com/embed/avatars/${discriminator}.png`;
+}
+
+export function buildModerationEmbed(data, member) {
+  const actionStyles = {
+    mute: { title: '🔇 Użytkownik wyciszony', color: 0xf1c40f },
+    unmute: { title: '🔊 Mute zdjęty', color: 0x2ecc71 },
+    deleteMessages: { title: '🧹 Wiadomości usunięte', color: 0xe67e22 },
+    ban: { title: '⛔ Permanentny ban', color: 0xe74c3c },
+    kick: { title: '👢 Użytkownik wyrzucony', color: 0xe67e22 }
+  };
+  const style = actionStyles[data.action];
+  const fields = [
+    { name: 'Użytkownik', value: `<@${data.targetId}>\n\`${data.targetId}\``, inline: true },
+    { name: 'Moderator', value: `<@${data.actorId}>\n\`${data.actorId}\``, inline: true },
+    { name: 'Powód', value: data.reason }
+  ];
+
+  if (data.action === 'mute') {
+    const muteUntil = Math.floor(new Date(data.until).getTime() / 1000);
+    fields.push({
+      name: 'Czas wyciszenia',
+      value: data.permanent
+        ? 'Bezterminowo — timeout odnawiany automatycznie'
+        : `<t:${muteUntil}:F>\n<t:${muteUntil}:R>`,
+      inline: true
+    });
+  }
+  if (data.action === 'deleteMessages') {
+    fields.push(
+      { name: 'Kanał', value: `<#${data.channelName.id}>`, inline: true },
+      { name: 'Usunięte wiadomości', value: String(data.deletedCount), inline: true }
+    );
+  }
+  if (data.warning) fields.push({ name: 'Ostrzeżenie', value: data.warning });
+
+  return {
+    author: { name: `LAW ENFORCEMENT • ${data.guildName}`.slice(0, 256) },
+    title: style.title,
+    description: `Akcja moderacyjna wobec <@${data.targetId}> została wykonana.`,
+    color: style.color,
+    fields,
+    thumbnail: { url: getAvatarUrl(data.guildId, member) },
+    footer: { text: 'Moderacja serwera' },
+    timestamp: new Date().toISOString()
+  };
 }
 
 async function deleteMessagesInChannel(channel, userId, durationMs) {
@@ -318,7 +346,7 @@ export function registerModerationRoutes(app, deps) {
         throw new UserError('Rola bota musi być wyższa od najwyższej roli moderowanego użytkownika.', 403);
       }
       const channelId = req.body?.channelId ? validId(req.body.channelId, 'kanału') : '';
-      let actionData = { action, guildName: guild.name, targetId, actorId: req.dashUser.id, reason };
+      let actionData = { action, guildId, guildName: guild.name, targetId, actorId: req.dashUser.id, reason };
       let responseWarning = '';
       let dmSent;
       let preparedDmChannel = null;
@@ -454,7 +482,7 @@ export function registerModerationRoutes(app, deps) {
       let channelSent = true;
       try {
         await logChannel.send({
-          content: logContent(actionData),
+          embeds: [buildModerationEmbed(actionData, member)],
           allowedMentions: { parse: [] }
         });
       } catch (error) {
