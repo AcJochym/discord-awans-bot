@@ -11,7 +11,8 @@ import { runFactionCommand } from './commands.js';
 import { registerCommandRoutes } from './commandsPanel.js';
 import { broadcastPanelEvent, broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
 import { onGuildMessage, ensureSpamNotices, startSpamJobs, registerSpamRoutes } from './spam.js';
-import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent } from './logStore.js';
+import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent, listPermanentMutes, getPermanentMute, savePermanentMute, updatePermanentMuteTimeout, deletePermanentMute } from './logStore.js';
+import { registerModerationRoutes, startPermanentMuteRenewal } from './moderation.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -142,7 +143,7 @@ function mergeConfigSchemas(values) {
   return present[0];
 }
 
-const configSchema = mergeConfigSchemas(Object.values(serverConfigs));
+const configSchema = mergeConfigSchemas([...Object.values(serverConfigs), { MODERATION: { LOG_CHANNEL_ID: '' } }]) || {};
 
 function validateConfigShape(template, value, path = 'config') {
   if (Array.isArray(template)) {
@@ -274,6 +275,7 @@ const LSPD_RESOURCES = {
 const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent
@@ -779,7 +781,10 @@ if (!DASH_AUTH_READY) {
 function dashboardRoleIds() {
   const explicit = (process.env.DASHBOARD_ROLE_IDS || '').split(',').map((v) => v.trim()).filter(Boolean);
   const configured = explicit.length ? explicit : Object.values(serverConfigs).flatMap((cfg) => cfg.REQUIRED_ROLE_IDS || []);
-  const staffRoles = Object.values(DEFAULT_STAFF_ROLES).flatMap((roles) => Object.values(roles).flat());
+  const staffRoles = [
+    ...Object.values(DEFAULT_STAFF_ROLES).flatMap((roles) => Object.values(roles).flat()),
+    ...Object.entries(serverConfigs).flatMap(([guildId, cfg]) => Object.values(staffRoleIds(cfg, guildId)).flat())
+  ];
   const list = [...configured, ...staffRoles];
   return [...new Set(list)].filter((id) => /^\d+$/.test(id));
 }
@@ -843,11 +848,12 @@ const DASHBOARD_TAB_CACHE_MS = 60_000;
 const ALL_DASHBOARD_TABS = ['home', 'overview', 'servers', 'logs', 'commands', 'tickets', 'absences', 'spam'];
 
 async function dashboardTabsFor(userId) {
-  if (BOT_OWNER_ID && userId === BOT_OWNER_ID) return [...ALL_DASHBOARD_TABS, 'config'];
+  if (BOT_OWNER_ID && userId === BOT_OWNER_ID) return [...ALL_DASHBOARD_TABS, 'config', 'moderation'];
   const cached = dashboardTabCache.get(userId);
   if (cached && cached.expiresAt > Date.now()) return cached.tabs;
 
   let rank = 0;
+  let canModerate = false;
   for (const [guildId, config] of Object.entries(serverConfigs)) {
     try {
       const response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}`, {
@@ -859,9 +865,9 @@ async function dashboardTabsFor(userId) {
       const roleGroups = staffRoleIds(config, guildId);
       const hasAny = (group) => (roleGroups[group] || []).some((roleId) => memberRoles.has(roleId));
 
+      if (hasAny('high_command') || hasAny('command')) canModerate = true;
       if (hasAny('high_command') || hasAny('command') || hasAny('command_ftd')) {
         rank = 3;
-        break;
       }
       if (hasAny('medium_command')) rank = Math.max(rank, 2);
       else if (hasAny('ftd')) rank = Math.max(rank, 1);
@@ -877,6 +883,7 @@ async function dashboardTabsFor(userId) {
       : rank === 1
         ? ['home', 'tickets', 'absences']
         : ['home'];
+  if (canModerate) tabs.push('moderation');
   dashboardTabCache.set(userId, { tabs, expiresAt: Date.now() + DASHBOARD_TAB_CACHE_MS });
   return tabs;
 }
@@ -1006,13 +1013,8 @@ app.post('/auth/logout', (req, res) => {
 });
 
 function requireBotOwner(req, res, next) {
-  const userId = req.dashUser?.id;
-  const ownerId = BOT_OWNER_ID ? String(BOT_OWNER_ID).trim() : '';
-  const userIdClean = userId ? String(userId).trim() : '';
-  if (!ownerId || userIdClean !== ownerId) {
-    // Loguj 403 żeby w Railway widać było przyczynę
-    console.warn(`[config] requireBotOwner: odmowa dostępu. userId="${userIdClean}" BOT_OWNER_ID="${ownerId}" match=${userIdClean === ownerId}`);
-    return res.status(403).json({ ok: false, error: `Brak dostępu. userId: ${userIdClean || '(brak)'}, ownerId: ${ownerId || '(BOT_OWNER_ID nie ustawione)'}` });
+  if (!BOT_OWNER_ID || req.dashUser?.id !== BOT_OWNER_ID) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
   }
   next();
 }
@@ -1293,6 +1295,23 @@ app.get('/api/staff', requireDashboardAuth, async (req, res) => {
   }
 });
 
+registerModerationRoutes(app, {
+  express,
+  requireDashboardAuth,
+  requireDashboardTab,
+  serverConfigs,
+  botOwnerId: BOT_OWNER_ID,
+  discordClient,
+  getGuildInfo,
+  addDashboardLog,
+  storageMode,
+  savePermanentMute,
+  getPermanentMute,
+  deletePermanentMute,
+  listPermanentMutes,
+  updatePermanentMuteTimeout
+});
+
 registerCommandRoutes(app, { serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, deps: commandDeps, express });
 registerTicketRoutes(app, { requireDashboardAuth, serverConfigs, getGuildInfo, botOwnerId: BOT_OWNER_ID, addDashboardLog, express });
 registerSpamRoutes(app, { serverConfigs, getGuildInfo, addDashboardLog });
@@ -1392,40 +1411,25 @@ app.get('/api/absences', requireDashboardAuth, async (req, res) => {
   }
 });
 
-app.get('/api/config', requireDashboardAuth, requireBotOwner, (req, res) => {
-  // Szybka lista serwerów z lokalnej konfiguracji — nie wymaga połączenia z Discordem
-  const serverIds = Object.keys(serverConfigs);
-  console.log(`[config] /api/config: serverConfigs ma ${serverIds.length} serwer(ów): ${serverIds.join(', ') || '(brak)'}`);
-  const guilds = serverIds.map((id) => ({
-    id,
-    name: discordClient.guilds.cache.get(id)?.name || id
-  }));
-  const encKeyOk = (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16;
-  const dbOk = storageMode() === 'postgres';
-  if (!serverIds.length) console.error('[config] serverConfigs jest pusty — sprawdź zmienną SERVER_CONFIGS_JSON na Railway!');
-  res.json({
-    ok: true,
-    guilds,
-    databaseAvailable: dbOk && encKeyOk,
-    errorHint: !dbOk
-      ? 'Brak połączenia z PostgreSQL. Sprawdź zmienną DATABASE_URL.'
-      : !encKeyOk
-        ? 'DASHBOARD_SESSION_SECRET musi mieć co najmniej 16 znaków.'
-        : !serverIds.length
-          ? 'SERVER_CONFIGS_JSON jest puste lub nieprawidłowe — sprawdź zmienną środowiskową na Railway.'
-          : null
-  });
-});
-
 app.get('/api/config/:guildId', requireDashboardAuth, requireBotOwner, (req, res) => {
   const guildId = String(req.params.guildId);
   if (!Object.hasOwn(serverConfigs, guildId)) return res.status(404).json({ ok: false, error: 'Nie znaleziono serwera.' });
   const encKeyOk = (process.env.CONFIG_ENCRYPTION_KEY || process.env.DASHBOARD_SESSION_SECRET || '').length >= 16;
   const dbOk = storageMode() === 'postgres';
+  const moderationSettings = isConfigObject(serverConfigs[guildId].MODERATION)
+    ? serverConfigs[guildId].MODERATION
+    : {};
+  const config = {
+    ...serverConfigs[guildId],
+    MODERATION: {
+      ...moderationSettings,
+      LOG_CHANNEL_ID: moderationSettings.LOG_CHANNEL_ID || ''
+    }
+  };
   res.json({
     ok: true,
     guildId,
-    config: editorConfig(serverConfigs[guildId]),
+    config: editorConfig(config),
     saved: savedConfigGuilds.has(guildId),
     databaseAvailable: dbOk && encKeyOk,
     errorHint: !dbOk ? 'Brak połączenia z PostgreSQL. Sprawdź zmienną DATABASE_URL.' : !encKeyOk ? 'Klucz szyfrowania jest za krótki — ustaw CONFIG_ENCRYPTION_KEY lub DASHBOARD_SESSION_SECRET o długości co najmniej 16 znaków.' : null
@@ -1450,6 +1454,10 @@ app.put('/api/config/:guildId', requireDashboardAuth, requireBotOwner, express.j
 
   const error = validateConfigShape(configSchema, config);
   if (error) return res.status(400).json({ ok: false, error });
+  const moderationLogChannelId = config.MODERATION?.LOG_CHANNEL_ID;
+  if (moderationLogChannelId && !isId(moderationLogChannelId)) {
+    return res.status(400).json({ ok: false, error: 'MODERATION.LOG_CHANNEL_ID musi być poprawnym ID kanału Discord.' });
+  }
 
   try {
     const updatedConfig = restoreSensitiveConfig(serverConfigs[guildId], config);
@@ -1783,6 +1791,7 @@ app.use(errorHandler);
 let httpServer = null;
 let shuttingDown = false;
 let lastRejectionLog = 0;
+let stopPermanentMuteRenewal = () => {};
 
 async function shutdown(reason, exitCode = 0) {
   if (shuttingDown) return;
@@ -1791,6 +1800,7 @@ async function shutdown(reason, exitCode = 0) {
   const failsafe = setTimeout(() => process.exit(exitCode || 1), 10_000);
   failsafe.unref();
   try {
+    stopPermanentMuteRenewal();
     httpServer?.close();
     httpServer?.closeAllConnections?.();   // kończy też otwarte strumienie zdarzeń (SSE)
     await discordClient.destroy();
@@ -1819,6 +1829,12 @@ process.on('uncaughtException', (error) => {
 async function startServer() {
   await logStoreReady;
   await loadSavedServerConfigs();
+  stopPermanentMuteRenewal = startPermanentMuteRenewal({
+    discordClient,
+    listPermanentMutes,
+    updatePermanentMuteTimeout,
+    deletePermanentMute
+  });
   // Jeśli baza była niedostępna przy starcie, wczytaj zapisane ustawienia, gdy tylko wróci
   onDatabaseReady(() => loadSavedServerConfigs());   // przy powrocie bazy po awarii przeładuj zapisane konfiguracje serwera
   processAbsenceReturnReminders();
