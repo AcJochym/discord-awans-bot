@@ -60,6 +60,7 @@
         <button class="tab" data-tab="tickets" hidden>Tickety<span id="tkBadge" class="tab-badge" hidden></span></button>
         <button class="tab" data-tab="absences" hidden>Urlopy i zawieszenia</button>
         <button class="tab" data-tab="spam" hidden>SPAM<span id="spamBadge" class="tab-badge" hidden></span></button>
+        <button class="tab" data-tab="moderation" hidden>Użytkownicy</button>
         <button id="configTabButton" class="tab" data-tab="config" hidden>Konfiguracja</button>
       </nav>
 
@@ -306,6 +307,26 @@
         </div>
       </section>
 
+      <section id="moderationTab" class="tab-panel">
+        <div class="glass-card moderation-panel">
+          <div class="panel-header moderation-header">
+            <div>
+              <h2>Użytkownicy serwera</h2>
+            </div>
+            <label class="moderation-guild-label" for="moderationGuild">Serwer</label>
+            <select id="moderationGuild" class="staff-guild" aria-label="Serwer do moderacji"></select>
+          </div>
+          <div class="moderation-toolbar">
+            <input id="moderationSearch" type="search" maxlength="80" placeholder="Szukaj po nicku, nazwie lub ID…" aria-label="Szukaj użytkownika" />
+            <span id="moderationCount" class="muted" role="status">Ładowanie…</span>
+          </div>
+          <p id="moderationLogChannel" class="moderation-note" role="status"></p>
+          <div id="moderationStatus" class="moderation-status" role="status" aria-live="polite"></div>
+          <div id="moderationMembers" class="moderation-members" aria-live="polite"></div>
+          <button type="button" id="moderationLoadMore" class="ghost-btn load-more" hidden>Załaduj kolejnych użytkowników</button>
+        </div>
+      </section>
+
       <section id="configTab" class="tab-panel">
         <div class="glass-card config-editor">
           <div class="panel-header">
@@ -514,6 +535,44 @@
       </div>
     </div>
 
+    <div id="moderationModal" class="modal" hidden>
+      <div class="modal-card glass-card confirm-modal moderation-modal" role="dialog" aria-modal="true" aria-labelledby="moderationModalTitle">
+        <button type="button" id="moderationClose" class="modal-close" aria-label="Zamknij">&times;</button>
+        <div class="confirm-body">
+          <h2 id="moderationModalTitle">Akcja moderacyjna</h2>
+          <p id="moderationTarget" class="muted"></p>
+          <label class="filter-label" for="moderationReason">Powód</label>
+          <textarea id="moderationReason" class="moderation-reason" maxlength="400" rows="3" required></textarea>
+          <div id="moderationMuteFields" class="moderation-fields" hidden>
+            <label class="moderation-check"><input id="moderationPermanent" type="checkbox" /> Permanent mute (timeout będzie odnawiany automatycznie)</label>
+            <div class="moderation-duration">
+              <label>Dni<input id="moderationMuteDays" type="number" min="0" max="28" value="0" /></label>
+              <label>Godziny<input id="moderationMuteHours" type="number" min="0" max="672" value="1" /></label>
+              <label>Minuty<input id="moderationMuteMinutes" type="number" min="0" max="40320" value="0" /></label>
+            </div>
+            <label class="filter-label" for="moderationUntil">Albo data i godzina końca</label>
+            <input id="moderationUntil" class="moderation-input" type="datetime-local" />
+            <p class="moderation-hint">Zwykły timeout Discorda może trwać maksymalnie 28 dni.</p>
+          </div>
+          <div id="moderationDeleteFields" class="moderation-fields" hidden>
+            <label class="filter-label" for="moderationChannel">Kanał, z którego usunąć wiadomości</label>
+            <select id="moderationChannel" class="staff-guild"></select>
+            <span class="filter-label">Zakres wstecz</span>
+            <div class="moderation-duration">
+              <label>Dni<input id="moderationDeleteDays" type="number" min="0" max="3650" value="0" /></label>
+              <label>Godziny<input id="moderationDeleteHours" type="number" min="0" max="87600" value="1" /></label>
+              <label>Minuty<input id="moderationDeleteMinutes" type="number" min="0" max="5256000" value="0" /></label>
+            </div>
+          </div>
+          <p id="moderationModalStatus" class="config-message" role="status" aria-live="polite"></p>
+          <div class="confirm-actions">
+            <button type="button" id="moderationCancel" class="ghost-btn">Anuluj</button>
+            <button type="button" id="moderationConfirm" class="ghost-btn danger-btn">Potwierdź</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="toasts" class="toasts" aria-live="polite"></div>
 
     <script>
@@ -599,6 +658,7 @@
         if (tabName === 'absences') loadAbsences();
         if (tabName === 'commands') loadCommands();
         if (tabName === 'spam') loadSpam();
+        if (tabName === 'moderation') loadModeration();
       }
 
       tabButtons.forEach((button) => {
@@ -738,6 +798,7 @@
           allowedTabs = new Set(Array.isArray(data.allowedTabs) ? data.allowedTabs : ['home']);
           allowedTabs.add('home');
           tabButtons.forEach((button) => { button.hidden = !allowedTabs.has(button.dataset.tab); });
+          document.getElementById('configTabButton').hidden = !data.isBotOwner;
           document.getElementById('clearLogsBtn').hidden = !data.isBotOwner;
           document.getElementById('userAvatar').src = data.avatarUrl;
           document.getElementById('userName').textContent = data.name;
@@ -968,6 +1029,306 @@
 
       staffGuildSel.addEventListener('change', () => { staffGuild = staffGuildSel.value; staffSig = ''; staffFirst = true; loadStaff(); });
 
+      /* --- Moderacja użytkowników --- */
+      const moderationGuildSel = document.getElementById('moderationGuild');
+      const moderationSearch = document.getElementById('moderationSearch');
+      const moderationMembersEl = document.getElementById('moderationMembers');
+      const moderationStatus = document.getElementById('moderationStatus');
+      const moderationCount = document.getElementById('moderationCount');
+      const moderationLoadMore = document.getElementById('moderationLoadMore');
+      const moderationChannelSel = document.getElementById('moderationChannel');
+      const moderationModal = document.getElementById('moderationModal');
+      const moderationModalStatus = document.getElementById('moderationModalStatus');
+      const moderationActionLabels = {
+        mute: 'Mute',
+        deleteMessages: 'Usuń Wiadomości',
+        ban: 'Perm Ban',
+        kick: 'Kick'
+      };
+      let moderationGuildsLoaded = false;
+      let moderationGuildId = '';
+      let moderationUsers = [];
+      let moderationNextAfter = null;
+      let moderationChannels = [];
+      let moderationTargetUser = null;
+      let moderationAction = '';
+      let moderationBusy = false;
+      let moderationMembersLoading = false;
+      let moderationMembersRequest = 0;
+
+      function setModerationStatus(message, state = '') {
+        moderationStatus.textContent = message;
+        moderationStatus.className = `moderation-status${state ? ` ${state}` : ''}`;
+      }
+
+      async function loadModerationGuilds() {
+        const response = await apiFetch('/api/moderation/guilds');
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się pobrać serwerów.');
+        moderationGuildsLoaded = true;
+        moderationGuildSel.replaceChildren(...data.guilds.map((guild) => new Option(`${guild.name} (${guild.id})`, guild.id)));
+        moderationGuildId = data.guilds[0]?.id || '';
+        moderationGuildSel.value = moderationGuildId;
+        if (!moderationGuildId) setModerationStatus('Nie masz uprawnień do moderowania żadnego skonfigurowanego serwera.', 'error');
+      }
+
+      function renderModerationUsers() {
+        const query = moderationSearch.value.trim().toLocaleLowerCase('pl-PL');
+        const filtered = moderationUsers.filter((user) => !query
+          || `${user.name} ${user.username} ${user.id}`.toLocaleLowerCase('pl-PL').includes(query));
+        moderationMembersEl.replaceChildren();
+        if (!filtered.length) {
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = moderationUsers.length
+            ? 'Brak pasujących użytkowników w załadowanej części listy.'
+            : 'Brak użytkowników do wyświetlenia.';
+          moderationMembersEl.appendChild(empty);
+        }
+        filtered.forEach((user) => {
+          const row = document.createElement('article');
+          row.className = 'moderation-user';
+          const identity = document.createElement('div');
+          identity.className = 'moderation-identity';
+          const avatar = document.createElement('img');
+          avatar.src = user.avatarUrl;
+          avatar.alt = '';
+          avatar.loading = 'lazy';
+          const name = document.createElement('strong');
+          name.textContent = user.name;
+          const sub = document.createElement('span');
+          sub.textContent = `${user.bot ? 'Bot • ' : ''}@${user.username} • ${user.id}`;
+          identity.append(avatar, name, sub);
+
+          const actions = document.createElement('div');
+          actions.className = 'moderation-actions';
+          for (const [action, label] of Object.entries(moderationActionLabels)) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `moderation-action moderation-action-${action}`;
+            button.dataset.action = action;
+            button.dataset.userId = user.id;
+            button.textContent = label;
+            button.title = `${label}: ${user.name}`;
+            actions.appendChild(button);
+          }
+          row.append(identity, actions);
+          moderationMembersEl.appendChild(row);
+        });
+        const visibleCount = filtered.length;
+        moderationCount.textContent = `${visibleCount} z ${moderationUsers.length} załadowanych${moderationNextAfter ? ' • są kolejni' : ''}`;
+        moderationLoadMore.hidden = !moderationNextAfter;
+      }
+
+      async function loadModerationChannels() {
+        const guildId = moderationGuildId;
+        const response = await apiFetch(`/api/moderation/${encodeURIComponent(guildId)}/channels`);
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się pobrać kanałów.');
+        if (guildId !== moderationGuildId) return;
+        moderationChannels = data.channels;
+        moderationChannelSel.replaceChildren(...moderationChannels.map((channel) => new Option(`#${channel.name}`, channel.id)));
+        document.getElementById('moderationLogChannel').textContent = data.logChannelConfigured
+          ? 'Powiadomienia z akcji będą wysyłane na DM użytkownika oraz kanał MODERATION.LOG_CHANNEL_ID.'
+          : 'Przed moderowaniem ustaw ID kanału powiadomień w konfiguracji: MODERATION.LOG_CHANNEL_ID.';
+        document.getElementById('moderationLogChannel').classList.toggle('error', !data.logChannelConfigured);
+      }
+
+      async function loadModerationMembers(after = null) {
+        if (moderationMembersLoading || !moderationGuildId) return;
+        const guildId = moderationGuildId;
+        const requestId = ++moderationMembersRequest;
+        moderationMembersLoading = true;
+        moderationLoadMore.disabled = true;
+        setModerationStatus(after ? 'Pobieranie kolejnych użytkowników…' : 'Pobieranie użytkowników…');
+        try {
+          const query = after ? `?after=${encodeURIComponent(after)}` : '';
+          const response = await apiFetch(`/api/moderation/${encodeURIComponent(guildId)}/members${query}`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się pobrać użytkowników.');
+          if (requestId !== moderationMembersRequest) return;
+          moderationUsers = after ? [...moderationUsers, ...data.users] : data.users;
+          moderationNextAfter = data.nextAfter;
+          renderModerationUsers();
+          setModerationStatus(`Załadowano ${moderationUsers.length} użytkowników.`, 'success');
+        } catch (error) {
+          if (requestId === moderationMembersRequest) setModerationStatus(error.message || 'Nie udało się pobrać użytkowników.', 'error');
+        } finally {
+          if (requestId === moderationMembersRequest) {
+            moderationMembersLoading = false;
+            moderationLoadMore.disabled = false;
+          }
+        }
+      }
+
+      async function loadModeration() {
+        try {
+          if (!moderationGuildsLoaded) await loadModerationGuilds();
+          if (!moderationGuildId) return;
+          if (!moderationUsers.length) {
+            await Promise.all([loadModerationChannels(), loadModerationMembers()]);
+          } else {
+            await loadModerationChannels();
+          }
+        } catch (error) {
+          setModerationStatus(error.message || 'Nie udało się wczytać panelu moderacji.', 'error');
+        }
+      }
+
+      moderationGuildSel.addEventListener('change', async () => {
+        moderationGuildId = moderationGuildSel.value;
+        moderationMembersRequest += 1;
+        moderationMembersLoading = false;
+        moderationUsers = [];
+        moderationNextAfter = null;
+        moderationChannels = [];
+        moderationSearch.value = '';
+        moderationMembersEl.replaceChildren();
+        if (moderationGuildId) {
+          try {
+            await Promise.all([loadModerationChannels(), loadModerationMembers()]);
+          } catch (error) {
+            setModerationStatus(error.message || 'Nie udało się wczytać serwera.', 'error');
+          }
+        }
+      });
+
+      moderationSearch.addEventListener('input', renderModerationUsers);
+      moderationLoadMore.addEventListener('click', () => loadModerationMembers(moderationNextAfter));
+
+      function updateMuteInputs() {
+        const permanent = document.getElementById('moderationPermanent').checked;
+        const untilInput = document.getElementById('moderationUntil');
+        const useDate = Boolean(untilInput.value) && !permanent;
+        if (useDate) {
+          for (const id of ['moderationMuteDays', 'moderationMuteHours', 'moderationMuteMinutes']) {
+            document.getElementById(id).value = '0';
+          }
+        }
+        for (const id of ['moderationMuteDays', 'moderationMuteHours', 'moderationMuteMinutes']) {
+          document.getElementById(id).disabled = permanent || useDate;
+        }
+        untilInput.disabled = permanent;
+      }
+
+      function openModerationModal(action, user) {
+        moderationAction = action;
+        moderationTargetUser = user;
+        document.getElementById('moderationModalTitle').textContent = moderationActionLabels[action];
+        document.getElementById('moderationTarget').textContent = `${user.name} (@${user.username}, ${user.id})`;
+        document.getElementById('moderationReason').value = '';
+        document.getElementById('moderationPermanent').checked = false;
+        document.getElementById('moderationMuteDays').value = '0';
+        document.getElementById('moderationMuteHours').value = '1';
+        document.getElementById('moderationMuteMinutes').value = '0';
+        document.getElementById('moderationUntil').value = '';
+        document.getElementById('moderationDeleteDays').value = '0';
+        document.getElementById('moderationDeleteHours').value = '1';
+        document.getElementById('moderationDeleteMinutes').value = '0';
+        document.getElementById('moderationMuteFields').hidden = action !== 'mute';
+        document.getElementById('moderationDeleteFields').hidden = action !== 'deleteMessages';
+        moderationModalStatus.textContent = '';
+        moderationModalStatus.className = 'config-message';
+        updateMuteInputs();
+        moderationModal.hidden = false;
+        requestAnimationFrame(() => moderationModal.classList.add('open'));
+        document.body.classList.add('modal-open');
+        document.getElementById('moderationReason').focus();
+      }
+
+      function closeModerationModal() {
+        if (moderationBusy) return;
+        moderationModal.classList.remove('open');
+        setTimeout(() => { moderationModal.hidden = true; }, 250);
+        document.body.classList.remove('modal-open');
+        moderationTargetUser = null;
+      }
+
+      moderationMembersEl.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-action][data-user-id]');
+        if (!button) return;
+        const user = moderationUsers.find((item) => item.id === button.dataset.userId);
+        if (user) openModerationModal(button.dataset.action, user);
+      });
+      document.getElementById('moderationPermanent').addEventListener('change', updateMuteInputs);
+      document.getElementById('moderationUntil').addEventListener('input', updateMuteInputs);
+      for (const id of ['moderationMuteDays', 'moderationMuteHours', 'moderationMuteMinutes']) {
+        document.getElementById(id).addEventListener('input', () => {
+          document.getElementById('moderationUntil').value = '';
+          updateMuteInputs();
+        });
+      }
+      document.getElementById('moderationClose').addEventListener('click', closeModerationModal);
+      document.getElementById('moderationCancel').addEventListener('click', closeModerationModal);
+      moderationModal.addEventListener('click', (event) => {
+        if (event.target === moderationModal) closeModerationModal();
+      });
+
+      document.getElementById('moderationConfirm').addEventListener('click', async () => {
+        if (!moderationTargetUser || moderationBusy) return;
+        const reason = document.getElementById('moderationReason').value.trim();
+        if (!reason) {
+          moderationModalStatus.textContent = 'Wpisz powód.';
+          moderationModalStatus.className = 'config-message error';
+          return;
+        }
+        const body = {
+          action: moderationAction,
+          userId: moderationTargetUser.id,
+          reason
+        };
+        if (moderationAction === 'mute') {
+          body.permanent = document.getElementById('moderationPermanent').checked;
+          const until = document.getElementById('moderationUntil').value;
+          body.until = until ? new Date(until).toISOString() : '';
+          body.days = Number(document.getElementById('moderationMuteDays').value || 0);
+          body.hours = Number(document.getElementById('moderationMuteHours').value || 0);
+          body.minutes = Number(document.getElementById('moderationMuteMinutes').value || 0);
+        }
+        if (moderationAction === 'deleteMessages') {
+          body.channelId = moderationChannelSel.value;
+          body.days = Number(document.getElementById('moderationDeleteDays').value || 0);
+          body.hours = Number(document.getElementById('moderationDeleteHours').value || 0);
+          body.minutes = Number(document.getElementById('moderationDeleteMinutes').value || 0);
+        }
+
+        const confirmButton = document.getElementById('moderationConfirm');
+        confirmButton.disabled = true;
+        moderationBusy = true;
+        moderationModalStatus.textContent = 'Wykonywanie akcji…';
+        moderationModalStatus.className = 'config-message';
+        try {
+          const response = await apiFetch(`/api/moderation/${encodeURIComponent(moderationGuildId)}/actions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wykonać akcji.');
+          if (moderationAction === 'ban' || moderationAction === 'kick') {
+            moderationUsers = moderationUsers.filter((user) => user.id !== moderationTargetUser.id);
+            renderModerationUsers();
+          }
+          const result = [
+            data.deletedCount !== null ? `Usunięto ${data.deletedCount} wiadomości.` : 'Akcja wykonana.',
+            data.warning
+          ].filter(Boolean).join(' ');
+          moderationModalStatus.textContent = result;
+          moderationModalStatus.className = `config-message${data.warning ? ' error' : ' success'}`;
+          setModerationStatus(result, data.warning ? 'error' : 'success');
+          setTimeout(() => {
+            moderationBusy = false;
+            closeModerationModal();
+          }, 1800);
+        } catch (error) {
+          moderationModalStatus.textContent = error.message || 'Nie udało się wykonać akcji.';
+          moderationModalStatus.className = 'config-message error';
+          moderationBusy = false;
+        } finally {
+          confirmButton.disabled = false;
+        }
+      });
+
       /* --- Konfiguracja serwerów --- */
       const configGuildSel = document.getElementById('configGuild');
       const configJson = document.getElementById('configJson');
@@ -982,6 +1343,8 @@
         WEBHOOK_URL: 'Webhook (URL)',
         ROLES: 'Role',
         CHANNELS: 'Kanały',
+        MODERATION: 'Moderacja',
+        LOG_CHANNEL_ID: 'Kanał powiadomień moderacyjnych (ID)',
         URLOP: 'Urlopy',
         ZAWIESZENIE: 'Zawieszenia',
         URLOP_ROLE_ID: 'Rola urlopu (ID)',
@@ -993,7 +1356,6 @@
       };
       let currentConfig = null;
       let configDbAvailable = true;
-      let configTabLoading = false;
 
       function setConfigStatus(message, state = '') {
         configStatus.textContent = message;
@@ -1139,26 +1501,23 @@
         if (configTabLoading) return;
         configTabLoading = true;
         saveConfigBtn.disabled = true;
-        setConfigStatus('Ładowanie…');
+        setConfigStatus('Ładowanie listy serwerów…');
         try {
-          // Pobieramy listę serwerów z /api/config — szybko, bez czekania na Discord
-          const response = await apiFetch('/api/config');
-          const data = await response.json();
-          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się pobrać listy serwerów.');
-          if (!data.guilds.length) {
-            configJson.disabled = true;
-            saveConfigBtn.disabled = true;
-            setConfigStatus('Brak skonfigurowanych serwerów.', 'error');
-            return;
+          if (!configGuildSel.options.length) {
+            const response = await apiFetch('/api/servers');
+            const data = await response.json();
+            if (!response.ok || !data.ok || !Array.isArray(data.guilds)) throw new Error(data.error || 'Nie udało się pobrać serwerów.');
+            configGuildSel.replaceChildren(...data.guilds.map((guild) => new Option(`${guild.name} (${guild.id})`, guild.id)));
+            if (!data.guilds.length) {
+              configJson.disabled = true;
+              saveConfigBtn.disabled = true;
+              setConfigStatus('Brak skonfigurowanych serwerów.', 'error');
+              return;
+            }
           }
-          // Aktualizuj status bazy od razu
-          if (!data.databaseAvailable) setConfigStatus(data.errorHint || 'Zapis konfiguracji jest niedostepny.', 'error');
-          // Wypełnij selector serwerów (zawsze, żeby po odświeżeniu lista była aktualna)
-          configGuildSel.replaceChildren(...data.guilds.map((g) => new Option(`${g.name} (${g.id})`, g.id)));
           await loadSelectedConfig();
         } catch (error) {
           setConfigStatus(error.message || 'Nie udało się pobrać listy serwerów.', 'error');
-          configTabLoading = false;
         } finally {
           configTabLoading = false;
         }
@@ -2494,8 +2853,7 @@
         wrap.append(input, chip, list);
         if (field.prefill === 'self' && cmd.data.me) choose(cmd.data.me);   // domyślnie ty — możesz zmienić
       }
-
-      function buildCommandField(field) {
+function buildCommandField(field) {
         const wrap = document.createElement('div');
         wrap.className = `cmd-field${['number', 'date', 'time', 'select', 'bool'].includes(field.type) ? ' half' : ''}`;
         wrap.dataset.field = field.key;
