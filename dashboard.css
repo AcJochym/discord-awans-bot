@@ -466,6 +466,9 @@ h3 { margin: 0; font-size: 1.5rem; font-weight: 700; }
   background: linear-gradient(90deg, var(--blue), var(--green));
   animation: toastBar 6s linear forwards;
 }
+.toast-success .toast-bar { background: linear-gradient(90deg, #34d399, var(--green)); }
+.toast-warning .toast-bar { background: linear-gradient(90deg, #f59e0b, #fcd34d); }
+.toast-error .toast-bar { background: linear-gradient(90deg, #ef4444, var(--red)); }
 @keyframes toastIn { from { opacity: 0; transform: translateX(40px) scale(0.92); } to { opacity: 1; transform: none; } }
 @keyframes toastBar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
