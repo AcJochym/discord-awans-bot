@@ -908,7 +908,8 @@
         while (container.children.length >= 4) container.firstElementChild.remove();
 
         const toast = document.createElement('div');
-        toast.className = 'toast';
+        const status = ['success', 'warning', 'error'].includes(event.status) ? event.status : '';
+        toast.className = `toast${status ? ` toast-${status}` : ''}`;
         toast.setAttribute('role', 'status');
 
         const img = document.createElement('img');
@@ -936,6 +937,22 @@
         };
         toast.addEventListener('click', close);
         setTimeout(close, 6000);
+      }
+
+      const shownModerationToastIds = new Set();
+      function showModerationToast(event, delay = 0) {
+        if (!event) return;
+        if (event.id && shownModerationToastIds.has(event.id)) return;
+        if (event.id) {
+          shownModerationToastIds.add(event.id);
+          if (shownModerationToastIds.size > 200) shownModerationToastIds.delete(shownModerationToastIds.values().next().value);
+        }
+        const display = () => {
+          showToast(event);
+          playChime();
+        };
+        if (delay) setTimeout(display, delay);
+        else display();
       }
 
       function adminsLabel(n) {
@@ -1099,6 +1116,18 @@
       let moderationBusy = false;
       let moderationMembersLoading = false;
       let moderationMembersRequest = 0;
+      let queuedModerationToast = null;
+      let moderationToastTargetId = '';
+      let moderationToastHoldUntil = 0;
+
+      function finishModerationAction(notification) {
+        const toast = queuedModerationToast || notification;
+        queuedModerationToast = null;
+        moderationBusy = false;
+        moderationToastHoldUntil = Date.now() + 350;
+        closeModerationModal();
+        if (toast) showModerationToast(toast, 300);
+      }
 
       function setModerationStatus(message, state = '') {
         moderationStatus.textContent = message;
@@ -1262,6 +1291,9 @@
       function openModerationModal(action, user) {
         moderationAction = action;
         moderationTargetUser = user;
+        moderationToastTargetId = user.id;
+        queuedModerationToast = null;
+        moderationToastHoldUntil = 0;
         document.getElementById('moderationModalTitle').textContent = moderationActionLabels[action];
         document.getElementById('moderationConfirm').textContent = action === 'unmute' ? moderationActionLabels.unmute : 'Potwierdź';
         document.getElementById('moderationTarget').textContent = `${user.name} (@${user.username}, ${user.id})`;
@@ -1353,7 +1385,14 @@
             body: JSON.stringify(body)
           });
           const data = await response.json();
-          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wykonać akcji.');
+          if (!response.ok || !data.ok) {
+            if (data.actionAttempted && data.notification) {
+              setModerationStatus(data.notification.text, 'error');
+              finishModerationAction(data.notification);
+              return;
+            }
+            throw new Error(data.error || 'Nie udało się wykonać akcji.');
+          }
           if (moderationAction === 'ban' || moderationAction === 'kick') {
             moderationUsers = moderationUsers.filter((user) => user.id !== moderationTargetUser.id);
             renderModerationUsers();
@@ -1370,18 +1409,14 @@
             moderationTargetUser.mutedUntil = null;
             renderModerationUsers();
           }
-          const result = [
-            data.deletedCount !== null ? `Usunięto ${data.deletedCount} wiadomości.` : 'Akcja wykonana.',
-            data.warning
-          ].filter(Boolean).join(' ');
-          moderationModalStatus.textContent = result;
-          moderationModalStatus.className = `config-message${data.warning ? ' error' : ' success'}`;
-          setModerationStatus(result, data.warning ? 'error' : 'success');
-          setTimeout(() => {
-            moderationBusy = false;
-            closeModerationModal();
-          }, 1800);
+          setModerationStatus(data.notification?.text || 'Akcja wykonana.', data.warning ? 'error' : 'success');
+          finishModerationAction(data.notification);
         } catch (error) {
+          if (queuedModerationToast && queuedModerationToast.targetId === moderationToastTargetId) {
+            setModerationStatus(queuedModerationToast.text, queuedModerationToast.status === 'error' ? 'error' : 'success');
+            finishModerationAction(queuedModerationToast);
+            return;
+          }
           moderationModalStatus.textContent = error.message || 'Nie udało się wykonać akcji.';
           moderationModalStatus.className = 'config-message error';
           moderationBusy = false;
@@ -2115,6 +2150,18 @@
       });
       ticketEvents.addEventListener('ticket-message', (event) => {
         try { handleTicketGatewayEvent(JSON.parse(event.data)); } catch (_) { /* pomijamy nieczytelne zdarzenie */ }
+      });
+      ticketEvents.addEventListener('moderation-action', (event) => {
+        try {
+          const notification = JSON.parse(event.data);
+          const isCurrentModerator = notification.actorId === dashboardUserId
+            && notification.targetId === moderationToastTargetId;
+          if (isCurrentModerator && (moderationBusy || Date.now() < moderationToastHoldUntil)) {
+            queuedModerationToast = notification;
+            return;
+          }
+          showModerationToast(notification);
+        } catch (_) { /* pomijamy nieczytelne zdarzenie */ }
       });
 
       tkEl('tkOlder').addEventListener('click', async () => {
