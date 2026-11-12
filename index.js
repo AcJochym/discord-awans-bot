@@ -1304,6 +1304,7 @@ registerModerationRoutes(app, {
   discordClient,
   getGuildInfo,
   addDashboardLog,
+  notifyPanel: (name, payload) => broadcastPanelEvent(name, payload),
   storageMode,
   savePermanentMute,
   getPermanentMute,
