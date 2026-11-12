@@ -330,7 +330,9 @@ export function registerModerationRoutes(app, deps) {
         mutedUntil: member.communication_disabled_until || null,
         muted: Boolean(member.communication_disabled_until && new Date(member.communication_disabled_until).getTime() > Date.now()),
         avatarUrl: getAvatarUrl(guildId, member)
-      }));
+      })).sort((a, b) => a.name.localeCompare(b.name, 'pl', { numeric: true, sensitivity: 'base' })
+        || a.username.localeCompare(b.username, 'pl', { numeric: true, sensitivity: 'base' })
+        || a.id.localeCompare(b.id));
       res.json({
         ok: true,
         users,
@@ -338,6 +340,72 @@ export function registerModerationRoutes(app, deps) {
       });
     } catch (error) {
       requestError(res, error, 'Nie udało się pobrać użytkowników serwera.');
+    }
+  });
+
+  app.get('/api/moderation/:guildId/members/:userId', async (req, res) => {
+    try {
+      const guildId = validId(req.params.guildId, 'serwer');
+      const userId = validId(req.params.userId, 'użytkownika');
+      const config = await ensureGuildAccess(guildId, req, deps);
+      const guild = await getGuild(deps.discordClient, guildId);
+      const member = await getMember(guild, userId);
+      const history = await deps.getModerationHistory(guildId, userId);
+      const activeAbsences = await deps.listActiveAbsences(deps.todayInWarsaw(), guildId);
+      const suspensions = activeAbsences.filter((absence) => absence.userId === userId && absence.kind === 'suspension');
+      const permanentMute = deps.storageMode() === 'postgres'
+        ? await deps.getPermanentMute(guildId, userId)
+        : null;
+      const roles = member.roles.cache
+        .filter((role) => role.id !== guildId)
+        .map((role) => ({
+          id: role.id,
+          name: role.name,
+          color: role.hexColor === '#000000' ? null : role.hexColor,
+          position: role.position
+        }))
+        .sort((a, b) => b.position - a.position);
+      const currentOffenses = suspensions.map((absence) => ({
+        type: 'Zawieszenie',
+        reason: absence.reason,
+        until: absence.returnsOn || null
+      }));
+      const suspensionRoleId = String(config.ROLES?.ZAWIESZENIE_ROLE_ID || '');
+      if (suspensionRoleId && member.roles.cache.has(suspensionRoleId) && !currentOffenses.length) {
+        currentOffenses.push({ type: 'Zawieszenie', reason: 'Aktywna rola zawieszenia.', until: null });
+      }
+
+      const timeoutUntil = member.communicationDisabledUntil;
+      if (timeoutUntil && timeoutUntil.getTime() > Date.now()) {
+        const latestMuteAction = history.find((entry) => entry.action === 'mute' || entry.action === 'unmute');
+        if (permanentMute || latestMuteAction?.action === 'mute') {
+          currentOffenses.push({
+            type: permanentMute ? 'Mute bezterminowy' : 'Mute',
+            reason: permanentMute?.reason || latestMuteAction?.reason || '',
+            until: permanentMute?.timeout_until || timeoutUntil.toISOString()
+          });
+        } else {
+          currentOffenses.push({ type: 'Timeout na Discordzie', reason: '', until: timeoutUntil.toISOString() });
+        }
+      }
+
+      res.json({
+        ok: true,
+        member: {
+          id: member.user.id,
+          name: member.displayName || member.user.globalName || member.user.username,
+          username: member.user.username,
+          nick: member.nickname || null,
+          avatarUrl: getAvatarUrl(guildId, member),
+          createdAt: member.user.createdAt?.toISOString() || null,
+          joinedAt: member.joinedAt?.toISOString() || null,
+          roles: roles.map(({ position, ...role }) => role)
+        },
+        currentOffenses,
+        history
+      });
+    } catch (error) {
+      requestError(res, error, 'Nie udało się pobrać profilu i historii użytkownika.');
     }
   });
 
