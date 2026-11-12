@@ -11,7 +11,7 @@ import { runFactionCommand } from './commands.js';
 import { registerCommandRoutes } from './commandsPanel.js';
 import { broadcastPanelEvent, broadcastTicketGatewayChannel, broadcastTicketGatewayMessage, registerTicketRoutes } from './ticketsPanel.js';
 import { onGuildMessage, ensureSpamNotices, startSpamJobs, registerSpamRoutes } from './spam.js';
-import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent, listPermanentMutes, getPermanentMute, savePermanentMute, updatePermanentMuteTimeout, deletePermanentMute } from './logStore.js';
+import { initLogStore, readServerConfigs, writeServerConfig, addLog, clearLogs, parseFilters, queryLogs, getModerationHistory, getStats, countBySource, guildSummaries, exportCsv, storageMode, storageDetails, onDatabaseReady, closeLogStore, getUserState, setUserState, saveAbsence, listAbsenceReminders, listActiveAbsences, markAbsenceReminderSent, listPermanentMutes, getPermanentMute, savePermanentMute, updatePermanentMuteTimeout, deletePermanentMute } from './logStore.js';
 import { registerModerationRoutes, startPermanentMuteRenewal } from './moderation.js';
 
 const app = express();
@@ -1309,6 +1309,9 @@ registerModerationRoutes(app, {
   savePermanentMute,
   getPermanentMute,
   deletePermanentMute,
+  getModerationHistory,
+  listActiveAbsences,
+  todayInWarsaw,
   listPermanentMutes,
   updatePermanentMuteTimeout
 });
