@@ -478,6 +478,44 @@ export async function queryLogs(f, { limit = 50, offset = 0 } = {}) {
   return { logs: rows.rows.map(fromRow), total: count.rows[0].n };
 }
 
+export async function getModerationHistory(guildId, userId) {
+  const commands = ['nagana', 'zawieszenie', 'kara_finansowa', 'degradacja', 'zwolnij'];
+  let rows;
+  if (!ready) {
+    rows = memory
+      .map(fromMemory)
+      .filter((row) => {
+        if (row.guildId !== String(guildId) || row.source !== 'server') return false;
+        const meta = row.meta || {};
+        return (commands.includes(row.command) && meta.options?.kto === String(userId))
+          || (['mute', 'unmute', 'ban', 'kick'].includes(meta.action) && meta.userId === String(userId));
+      })
+      .slice(0, 100);
+  } else {
+    const result = await pool.query(`
+      SELECT id, ts, level, source, guild_id, command, message, meta
+      FROM dashboard_logs
+      WHERE guild_id = $1 AND source = 'server' AND (
+        (command = ANY($2::text[]) AND meta->'options'->>'kto' = $3)
+        OR (meta->>'action' = ANY($4::text[]) AND meta->>'userId' = $3)
+      )
+      ORDER BY ts DESC, id DESC
+      LIMIT 100
+    `, [String(guildId), commands, String(userId), ['mute', 'unmute', 'ban', 'kick']]);
+    rows = result.rows.map(fromRow);
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    timestamp: row.timestamp,
+    command: row.command || null,
+    action: row.meta?.action || null,
+    reason: row.meta?.reason || row.meta?.options?.powod || '',
+    actorId: row.meta?.actorId || null,
+    options: row.meta?.options || {}
+  }));
+}
+
 // ---------- Statystyki ----------
 const STEPS = [300, 900, 3600, 10800, 21600, 43200, 86400, 172800, 604800, 2592000];
 
