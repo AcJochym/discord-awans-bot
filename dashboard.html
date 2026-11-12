@@ -449,6 +449,13 @@
           <dl id="pfInfo" class="pf-info"></dl>
           <h4 class="pf-sub">Role na serwerze</h4>
           <div id="pfRoles" class="pf-roles"></div>
+          <section id="pfDiscipline" class="pf-discipline" hidden aria-live="polite">
+            <p id="pfDisciplineStatus" class="moderation-status" role="status"></p>
+            <h4 class="pf-sub">Aktualne przewinienia</h4>
+            <div id="pfCurrentOffenses" class="pf-records"></div>
+            <h4 class="pf-sub">Historia przewinień</h4>
+            <div id="pfDisciplineHistory" class="pf-records"></div>
+          </section>
         </div>
       </div>
     </div>
@@ -1142,13 +1149,19 @@
         moderationGuildSel.replaceChildren(...data.guilds.map((guild) => new Option(`${guild.name} (${guild.id})`, guild.id)));
         moderationGuildId = data.guilds[0]?.id || '';
         moderationGuildSel.value = moderationGuildId;
-        if (!moderationGuildId) setModerationStatus('Nie masz uprawnień do moderowania żadnego skonfigurowanego serwera.', 'error');
+        if (!moderationGuildId) {
+          moderationCount.textContent = 'Brak dostępnych serwerów.';
+          setModerationStatus('Nie masz uprawnień do moderowania żadnego skonfigurowanego serwera.', 'error');
+        }
       }
 
       function renderModerationUsers() {
         const query = moderationSearch.value.trim().toLocaleLowerCase('pl-PL');
         const filtered = moderationUsers.filter((user) => !query
-          || `${user.name} ${user.username} ${user.id}`.toLocaleLowerCase('pl-PL').includes(query));
+          || `${user.name} ${user.username} ${user.id}`.toLocaleLowerCase('pl-PL').includes(query))
+          .sort((a, b) => a.name.localeCompare(b.name, 'pl', { numeric: true, sensitivity: 'base' })
+            || a.username.localeCompare(b.username, 'pl', { numeric: true, sensitivity: 'base' })
+            || a.id.localeCompare(b.id));
         moderationMembersEl.replaceChildren();
         if (!filtered.length) {
           const empty = document.createElement('div');
@@ -1161,8 +1174,11 @@
         filtered.forEach((user) => {
           const row = document.createElement('article');
           row.className = 'moderation-user';
-          const identity = document.createElement('div');
-          identity.className = 'moderation-identity';
+          const identity = document.createElement('button');
+          identity.type = 'button';
+          identity.className = 'moderation-identity moderation-profile-trigger';
+          identity.dataset.profileUserId = user.id;
+          identity.setAttribute('aria-label', `Otwórz profil użytkownika ${user.name}`);
           const avatar = document.createElement('img');
           avatar.src = user.avatarUrl;
           avatar.alt = '';
@@ -1217,6 +1233,7 @@
         const requestId = ++moderationMembersRequest;
         moderationMembersLoading = true;
         moderationLoadMore.disabled = true;
+        if (!after) moderationCount.textContent = 'Ładowanie użytkowników…';
         setModerationStatus(after ? 'Pobieranie kolejnych użytkowników…' : 'Pobieranie użytkowników…');
         try {
           const query = after ? `?after=${encodeURIComponent(after)}` : '';
@@ -1229,7 +1246,10 @@
           renderModerationUsers();
           setModerationStatus(`Załadowano ${moderationUsers.length} użytkowników.`, 'success');
         } catch (error) {
-          if (requestId === moderationMembersRequest) setModerationStatus(error.message || 'Nie udało się pobrać użytkowników.', 'error');
+          if (requestId === moderationMembersRequest) {
+            setModerationStatus(error.message || 'Nie udało się pobrać użytkowników.', 'error');
+            if (!moderationUsers.length) moderationCount.textContent = 'Nie udało się załadować użytkowników.';
+          }
         } finally {
           if (requestId === moderationMembersRequest) {
             moderationMembersLoading = false;
@@ -1262,11 +1282,14 @@
         moderationSearch.value = '';
         moderationMembersEl.replaceChildren();
         if (moderationGuildId) {
+          moderationCount.textContent = 'Ładowanie użytkowników…';
           try {
             await Promise.all([loadModerationChannels(), loadModerationMembers()]);
           } catch (error) {
             setModerationStatus(error.message || 'Nie udało się wczytać serwera.', 'error');
           }
+        } else {
+          moderationCount.textContent = 'Wybierz serwer do moderacji.';
         }
       });
 
@@ -1327,9 +1350,15 @@
 
       moderationMembersEl.addEventListener('click', (event) => {
         const button = event.target.closest('button[data-action][data-user-id]');
-        if (!button) return;
-        const user = moderationUsers.find((item) => item.id === button.dataset.userId);
-        if (user) openModerationModal(button.dataset.action, user);
+        if (button) {
+          const user = moderationUsers.find((item) => item.id === button.dataset.userId);
+          if (user) openModerationModal(button.dataset.action, user);
+          return;
+        }
+        const profileButton = event.target.closest('button[data-profile-user-id]');
+        if (!profileButton) return;
+        const user = moderationUsers.find((item) => item.id === profileButton.dataset.profileUserId);
+        if (user) openProfile(user, { key: 'member', label: 'Użytkownik' }, { moderationGuildId });
       });
       document.getElementById('moderationPermanent').addEventListener('change', updateMuteInputs);
       document.getElementById('moderationUntil').addEventListener('input', updateMuteInputs);
@@ -1664,16 +1693,54 @@
       const GROUP_COLORS = { high_command: '#ff8f8f', command: '#fcd34d', medium_command: '#7cc4ff', command_ftd: '#c4a8ff', ftd: '#6ee7b7' };
       let lastFocus = null;
       let closeTimer = null;
+      let profileRequestId = 0;
 
-      function openProfile(member, group) {
+      function renderProfileRecords(container, records, emptyText, getTitle, getDetails) {
+        container.replaceChildren();
+        if (!records.length) {
+          const empty = document.createElement('p');
+          empty.className = 'muted';
+          empty.textContent = emptyText;
+          container.appendChild(empty);
+          return;
+        }
+        records.forEach((record) => {
+          const item = document.createElement('article');
+          item.className = 'pf-record';
+          const header = document.createElement('header');
+          const title = document.createElement('strong');
+          title.textContent = getTitle(record);
+          const date = document.createElement('time');
+          date.textContent = record.timestamp
+            ? new Date(record.timestamp).toLocaleString('pl-PL')
+            : '';
+          header.append(title, date);
+          item.appendChild(header);
+          const details = getDetails(record);
+          if (details) {
+            const text = document.createElement('p');
+            text.textContent = details;
+            item.appendChild(text);
+          }
+          if (record.reason) {
+            const reason = document.createElement('p');
+            reason.textContent = `Powód: ${record.reason}`;
+            item.appendChild(reason);
+          }
+          container.appendChild(item);
+        });
+      }
+
+      function openProfile(member, group, options = {}) {
         clearTimeout(closeTimer);
-        profileMember = member;
+        const requestId = ++profileRequestId;
+        profileMember = { ...member, roles: member.roles || [] };
         lastFocus = document.activeElement;
         const accent = GROUP_COLORS[group.key] || '#7cc4ff';
         document.getElementById('pfBanner').style.background = `linear-gradient(135deg, ${esc(member.color || accent)}, rgba(10, 20, 45, 0.9))`;
-        document.getElementById('pfAvatar').src = member.avatarUrl;
+        document.getElementById('pfAvatar').src = member.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
         document.getElementById('pfName').textContent = member.name;
-        document.getElementById('pfUser').textContent = `@${member.username}`;
+        document.getElementById('pfUser').textContent = member.username ? `@${member.username}` : '';
         document.getElementById('pfBadges').innerHTML =
           (member.bot ? `<span class="pf-badge bot">BOT</span>${member.verifiedApplication ? '<span class="pf-badge verified" title="Zweryfikowana aplikacja">✓ Zweryfikowana aplikacja</span>' : ''}` : '') +
           `<span class="pf-badge" style="--c:${accent}">${esc(group.label)}</span>` +
@@ -1685,21 +1752,100 @@
           ['Konto Discord od', fmtDate(member.createdAt)],
           ['ID użytkownika', `<span class="mono">${esc(member.id)}</span> <button type="button" class="copy-btn" id="pfCopy">Kopiuj</button>`]
         ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
-        document.getElementById('pfRoles').innerHTML = member.roles.length
-          ? member.roles.map((r) => `<span class="role-chip${r.staff ? ' staff' : ''}"><i style="background:${esc(r.color || '#8b9db3')}"></i>${esc(r.name)}</span>`).join('')
+        document.getElementById('pfRoles').innerHTML = profileMember.roles.length
+          ? profileMember.roles.map((r) => `<span class="role-chip${r.staff ? ' staff' : ''}"><i style="background:${esc(r.color || '#8b9db3')}"></i>${esc(r.name)}</span>`).join('')
           : '<span class="muted">Brak ról.</span>';
         document.getElementById('pfCopy').addEventListener('click', async (e) => {
           try { await navigator.clipboard.writeText(member.id); e.target.textContent = 'Skopiowano!'; } catch (_) { e.target.textContent = 'Brak dostępu'; }
           setTimeout(() => { e.target.textContent = 'Kopiuj'; }, 1500);
         });
+        const discipline = document.getElementById('pfDiscipline');
+        discipline.hidden = !options.moderationGuildId;
+        modal.querySelector('.modal-card').classList.toggle('profile-moderation', Boolean(options.moderationGuildId));
+        if (options.moderationGuildId) {
+          const status = document.getElementById('pfDisciplineStatus');
+          status.textContent = 'Ładowanie przewinień…';
+          status.className = 'moderation-status';
+          document.getElementById('pfCurrentOffenses').replaceChildren();
+          document.getElementById('pfDisciplineHistory').replaceChildren();
+        }
         modal.hidden = false;
         document.body.classList.add('modal-open');
         requestAnimationFrame(() => modal.classList.add('open'));
         document.getElementById('pfClose').focus();
+        if (options.moderationGuildId) loadModerationProfile(member.id, options.moderationGuildId, requestId);
+      }
+
+      async function loadModerationProfile(userId, guildId, requestId) {
+        const status = document.getElementById('pfDisciplineStatus');
+        try {
+          const response = await apiFetch(`/api/moderation/${encodeURIComponent(guildId)}/members/${encodeURIComponent(userId)}`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się pobrać historii przewinień.');
+          if (requestId !== profileRequestId || profileMember?.id !== userId) return;
+          const member = data.member;
+          profileMember = { ...profileMember, ...member };
+          document.getElementById('pfAvatar').src = member.avatarUrl;
+          document.getElementById('pfName').textContent = member.name;
+          document.getElementById('pfUser').textContent = member.username ? `@${member.username}` : '';
+          const days = daysSince(member.joinedAt);
+          document.getElementById('pfInfo').innerHTML = [
+            ['Pseudonim', member.nick ? esc(member.nick) : '—'],
+            ['Na serwerze od', `${fmtDate(member.joinedAt)}${days !== null ? ` <span class="muted">(${fmtNum(days)} dni)</span>` : ''}`],
+            ['Konto Discord od', fmtDate(member.createdAt)],
+            ['ID użytkownika', `<span class="mono">${esc(member.id)}</span> <button type="button" class="copy-btn" id="pfCopy">Kopiuj</button>`]
+          ].map(([key, value]) => `<div><dt>${key}</dt><dd>${value}</dd></div>`).join('');
+          document.getElementById('pfCopy').addEventListener('click', async (event) => {
+            try { await navigator.clipboard.writeText(member.id); event.target.textContent = 'Skopiowano!'; } catch (_) { event.target.textContent = 'Brak dostępu'; }
+            setTimeout(() => { event.target.textContent = 'Kopiuj'; }, 1500);
+          });
+          document.getElementById('pfRoles').innerHTML = member.roles.length
+            ? member.roles.map((role) => `<span class="role-chip"><i style="background:${esc(role.color || '#8b9db3')}"></i>${esc(role.name)}</span>`).join('')
+            : '<span class="muted">Brak ról.</span>';
+          const actionLabels = { mute: 'Mute', unmute: 'Zdjęcie mute', ban: 'Ban', kick: 'Wyrzucenie' };
+          const historyTitle = (entry) => {
+            if (entry.action) return actionLabels[entry.action] || 'Akcja moderacyjna';
+            const labels = {
+              nagana: `Nagana${entry.options.ktora_nagana ? ` (${entry.options.ktora_nagana})` : ''}`,
+              zawieszenie: 'Zawieszenie',
+              kara_finansowa: 'Kara finansowa',
+              degradacja: 'Degradacja',
+              zwolnij: 'Zwolnienie'
+            };
+            return labels[entry.command] || 'Przewinienie';
+          };
+          const historyDetails = (entry) => {
+            const options = entry.options || {};
+            if (entry.command === 'zawieszenie') return options.czas ? `Czas: ${options.czas}` : '';
+            if (entry.command === 'kara_finansowa') return options.kwota ? `Kwota: ${options.kwota}$` : '';
+            if (entry.command === 'degradacja') return options.stopien ? `Nowy stopień: ${options.stopien}` : '';
+            return '';
+          };
+          renderProfileRecords(
+            document.getElementById('pfCurrentOffenses'),
+            data.currentOffenses,
+            'Brak aktywnych przewinień.',
+            (entry) => entry.type,
+            (entry) => entry.until ? `Do: ${new Date(entry.until).toLocaleString('pl-PL')}` : ''
+          );
+          renderProfileRecords(
+            document.getElementById('pfDisciplineHistory'),
+            data.history,
+            'Brak zapisanej historii przewinień.',
+            historyTitle,
+            historyDetails
+          );
+          status.textContent = '';
+        } catch (error) {
+          if (requestId !== profileRequestId || profileMember?.id !== userId) return;
+          status.textContent = error.message || 'Nie udało się pobrać historii przewinień.';
+          status.className = 'moderation-status error';
+        }
       }
 
       function closeProfile() {
         if (modal.hidden) return;
+        profileRequestId += 1;
         modal.classList.remove('open');
         document.body.classList.remove('modal-open');
         profileMember = null;
