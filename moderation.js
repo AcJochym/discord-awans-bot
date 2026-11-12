@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { PermissionFlagsBits } from 'discord.js';
 import { UserError, discordRequest, isId, publicError } from './shared.js';
 import { staffRoleIds } from './staff.js';
@@ -49,10 +50,10 @@ export function parseDeleteLookback(body) {
   return durationMs;
 }
 
-function requestError(res, error, fallback) {
+function requestError(res, error, fallback, extra = {}) {
   console.error('[moderation] Błąd operacji:', error);
   const status = Number.isInteger(error?.status) ? error.status : 500;
-  return res.status(status).json({ ok: false, error: publicError(error, fallback) });
+  return res.status(status).json({ ok: false, error: publicError(error, fallback), ...extra });
 }
 
 function validId(value, label) {
@@ -211,6 +212,46 @@ export function buildModerationEmbed(data, member) {
   };
 }
 
+function moderationActionName(action) {
+  return {
+    mute: 'Mute',
+    unmute: 'Unmute',
+    deleteMessages: 'Usunięcie wiadomości',
+    ban: 'Perm Ban',
+    kick: 'Kick'
+  }[action] || 'Akcja moderacyjna';
+}
+
+export function buildModerationPanelNotification(context, { warning = '', error = '' } = {}) {
+  const failed = Boolean(error);
+  const status = failed ? 'error' : warning ? 'warning' : 'success';
+  const actionName = moderationActionName(context.action);
+  const actionDetails = context.action === 'deleteMessages' && Number.isInteger(context.deletedCount)
+    ? ` Usunięto wiadomości: ${context.deletedCount}.`
+    : '';
+  const outcome = failed
+    ? `❌ ${actionName} dla ${context.targetName} na serwerze ${context.guildName} nie powiodło się: ${error}`
+    : `${warning ? '⚠️' : '✅'} ${actionName} dla ${context.targetName} na serwerze ${context.guildName} wykonano${warning ? ` z ostrzeżeniem: ${warning}` : ' poprawnie'} przez ${context.actorName}.${actionDetails}`;
+
+  return {
+    id: randomUUID(),
+    name: failed ? 'Akcja moderacyjna nie powiodła się' : 'Akcja moderacyjna',
+    text: outcome,
+    status,
+    avatarUrl: context.avatarUrl,
+    actorId: context.actorId,
+    targetId: context.targetId
+  };
+}
+
+async function broadcastModerationNotification(deps, notification) {
+  try {
+    await deps.notifyPanel('moderation-action', notification);
+  } catch (error) {
+    console.error('[moderation] Nie udało się powiadomić otwartych paneli o akcji:', error);
+  }
+}
+
 async function deleteMessagesInChannel(channel, userId, durationMs) {
   const cutoff = Date.now() - durationMs;
   const fourteenDaysAgo = Date.now() - 14 * DAY_MS;
@@ -325,6 +366,7 @@ export function registerModerationRoutes(app, deps) {
   });
 
   app.post('/api/moderation/:guildId/actions', express.json({ limit: '10kb' }), async (req, res) => {
+    let notificationContext = null;
     try {
       const guildId = validId(req.params.guildId, 'serwer');
       const config = await ensureGuildAccess(guildId, req, deps);
@@ -347,6 +389,15 @@ export function registerModerationRoutes(app, deps) {
       }
       const channelId = req.body?.channelId ? validId(req.body.channelId, 'kanału') : '';
       let actionData = { action, guildId, guildName: guild.name, targetId, actorId: req.dashUser.id, reason };
+      notificationContext = {
+        action,
+        targetId,
+        targetName: member.displayName || member.user.globalName || member.user.username,
+        avatarUrl: getAvatarUrl(guildId, member),
+        guildName: guild.name,
+        actorId: req.dashUser.id,
+        actorName: req.dashUser.name || req.dashUser.username || req.dashUser.id
+      };
       let responseWarning = '';
       let dmSent;
       let preparedDmChannel = null;
@@ -500,14 +551,33 @@ export function registerModerationRoutes(app, deps) {
         channelId: channelId || null
       });
 
+      const warning = [
+        responseWarning,
+        !dmSent ? 'Nie udało się wysłać DM do użytkownika.' : '',
+        !channelSent ? 'Nie udało się wysłać powiadomienia na kanał logów.' : ''
+      ].filter(Boolean).join(' ');
+      notificationContext.deletedCount = actionData.deletedCount;
+      const notification = buildModerationPanelNotification(notificationContext, { warning });
+      await broadcastModerationNotification(deps, notification);
+
       res.json({
         ok: true,
         dmSent,
         channelSent,
-        warning: [responseWarning, !dmSent ? 'Nie udało się wysłać DM do użytkownika.' : '', !channelSent ? 'Nie udało się wysłać powiadomienia na kanał logów.' : ''].filter(Boolean).join(' '),
-        deletedCount: actionData.deletedCount ?? null
+        warning,
+        deletedCount: actionData.deletedCount ?? null,
+        notification
       });
     } catch (error) {
+      if (notificationContext) {
+        const message = publicError(error, 'Nie udało się wykonać akcji moderacyjnej.');
+        const notification = buildModerationPanelNotification(notificationContext, { error: message });
+        await broadcastModerationNotification(deps, notification);
+        return requestError(res, error, 'Nie udało się wykonać akcji moderacyjnej.', {
+          actionAttempted: true,
+          notification
+        });
+      }
       requestError(res, error, 'Nie udało się wykonać akcji moderacyjnej.');
     }
   });
