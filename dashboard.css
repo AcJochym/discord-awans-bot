@@ -690,6 +690,9 @@ button.hbar:hover { background: rgba(255, 255, 255, 0.1); }
   border: 1px solid var(--edge); border-radius: 14px; background: var(--glass-in);
 }
 .moderation-identity { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; column-gap: 10px; min-width: 0; }
+.moderation-profile-trigger { width: 100%; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.moderation-profile-trigger:hover strong { color: #8ecbff; text-decoration: underline; text-underline-offset: 3px; }
+.moderation-profile-trigger:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 6px; }
 .moderation-identity img { grid-row: span 2; width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: var(--glass-in); }
 .moderation-identity strong, .moderation-identity span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .moderation-identity span { color: var(--muted); font-size: 0.78rem; }
@@ -730,6 +733,7 @@ button.hbar:hover { background: rgba(255, 255, 255, 0.1); }
 .modal.open { opacity: 1; }
 body.modal-open { overflow: hidden; }
 .modal-card { position: relative; width: min(460px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; padding: 0; transform: translateY(24px) scale(0.94); transition: transform 0.35s cubic-bezier(.2, 1.1, .3, 1); }
+.modal-card.profile-moderation { width: min(700px, 100%); }
 .modal.open .modal-card { transform: none; }
 .confirm-modal { width: min(440px, 100%); }
 .confirm-body { padding: 28px; }
@@ -765,6 +769,13 @@ body.modal-open { overflow: hidden; }
 .copy-btn:hover { background: rgba(255, 255, 255, 0.2); }
 .pf-sub { margin: 18px 0 8px; font: 600 1rem var(--display); color: var(--muted); }
 .pf-roles { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-discipline { margin-top: 16px; }
+.pf-records { display: grid; gap: 8px; }
+.pf-records > .muted { margin: 0; padding: 10px 12px; }
+.pf-record { padding: 10px 12px; border: 1px solid var(--edge); border-radius: 12px; background: rgba(255, 255, 255, 0.05); }
+.pf-record header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.pf-record header time { color: var(--muted); font-size: 0.76rem; }
+.pf-record p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.88rem; }
 .role-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 0.8rem; background: var(--glass-in); border: 1px solid var(--edge); }
 .role-chip i { width: 9px; height: 9px; border-radius: 50%; }
 .role-chip.staff { border-color: rgba(255, 255, 255, 0.4); background: rgba(255, 255, 255, 0.14); font-weight: 600; }
