@@ -1084,7 +1084,7 @@
       const moderationModalStatus = document.getElementById('moderationModalStatus');
       const moderationActionLabels = {
         mute: 'Mute',
-        unmute: 'Odmutuj',
+        unmute: 'Unmute',
         deleteMessages: 'Usuń Wiadomości',
         ban: 'Perm Ban',
         kick: 'Kick'
@@ -1146,8 +1146,11 @@
 
           const actions = document.createElement('div');
           actions.className = 'moderation-actions';
-          for (const [action, label] of Object.entries(moderationActionLabels)) {
-            if (action === 'unmute' && !user.muted) continue;
+          const userActions = [
+            [user.muted ? 'unmute' : 'mute', user.muted ? moderationActionLabels.unmute : moderationActionLabels.mute],
+            ...Object.entries(moderationActionLabels).filter(([action]) => action !== 'mute' && action !== 'unmute')
+          ];
+          for (const [action, label] of userActions) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = `moderation-action moderation-action-${action}`;
@@ -1260,7 +1263,7 @@
         moderationAction = action;
         moderationTargetUser = user;
         document.getElementById('moderationModalTitle').textContent = moderationActionLabels[action];
-        document.getElementById('moderationConfirm').textContent = action === 'unmute' ? 'Odmutuj' : 'Potwierdź';
+        document.getElementById('moderationConfirm').textContent = action === 'unmute' ? moderationActionLabels.unmute : 'Potwierdź';
         document.getElementById('moderationTarget').textContent = `${user.name} (@${user.username}, ${user.id})`;
         document.getElementById('moderationReason').value = '';
         document.getElementById('moderationPermanent').checked = false;
@@ -1353,6 +1356,14 @@
           if (!response.ok || !data.ok) throw new Error(data.error || 'Nie udało się wykonać akcji.');
           if (moderationAction === 'ban' || moderationAction === 'kick') {
             moderationUsers = moderationUsers.filter((user) => user.id !== moderationTargetUser.id);
+            renderModerationUsers();
+          } else if (moderationAction === 'mute') {
+            const durationMs = body.days * 24 * 60 * 60 * 1000
+              + body.hours * 60 * 60 * 1000
+              + body.minutes * 60 * 1000;
+            moderationTargetUser.muted = true;
+            moderationTargetUser.mutedUntil = body.until
+              || new Date(Date.now() + (body.permanent ? 28 * 24 * 60 * 60 * 1000 : durationMs)).toISOString();
             renderModerationUsers();
           } else if (moderationAction === 'unmute') {
             moderationTargetUser.muted = false;
